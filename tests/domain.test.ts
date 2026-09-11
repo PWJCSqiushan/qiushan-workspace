@@ -1,0 +1,14 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {newTask,gradeRank,rowSort,globalSort,groupOf,today,doneToday,deadline,matches,stampMs} from '../lib/domain.ts';
+const t=(x:Record<string,unknown>={})=>({...newTask(),...x});
+test('workflow grades retain plus/minus and NA versus unset',()=>{const codes=['NA','','C','B-','A-','B+','S','A','A+'];assert.deepEqual(codes.sort((a,b)=>gradeRank(a)-gradeRank(b)),['S','A+','A','A-','B+','B-','C','','NA']);});
+test('rows rank flow grade before coordination number',()=>{const a=t({priority:'S',coordOrder:6}),b=t({priority:'A',coordOrder:1});assert.ok(rowSort(a,b)<0);});
+test('global sequence B1 precedes A6; flags do not reorder',()=>{const a=t({coordLetter:'A',coordOrder:6}),b=t({coordLetter:'B',coordOrder:1});assert.ok(globalSort(b,a)<0);assert.ok(globalSort({...b,flagged:true},a)<0);});
+test('same sequence uses coordination grade',()=>assert.ok(globalSort(t({coordOrder:1,coordLetter:'S'}),t({coordOrder:1,coordLetter:'B'}))<0));
+test('emergency is before boost; boost expires at Shanghai midnight',()=>{const date='2026-09-10';const em=t({emergency:true}),boost=t({boostDate:date,boostAt:'2026-09-10T10:00:00Z',coordOrder:8}),normal=t({coordOrder:1});assert.ok(globalSort(em,boost,date)<0);assert.ok(globalSort(boost,normal,date)<0);assert.ok(globalSort(boost,normal,'2026-09-11')>0);});
+test('boost FIFO and NA group; unnumbered routines stay distinct',()=>{const a=t({boostDate:'2026-09-10',boostAt:'2026-09-10T01:00:00Z'}),b=t({boostDate:'2026-09-10',boostAt:'2026-09-10T02:00:00Z'});assert.ok(globalSort(a,b,'2026-09-10')<0);assert.equal(groupOf(t({daily:true,coordLetter:'NA'})),5);assert.equal(groupOf(t({daily:true})),3);assert.equal(groupOf(t()),4);});
+test('Shanghai date changes at UTC 16:00, independent of host timezone',()=>{assert.equal(today(new Date('2026-09-10T15:59:59Z')),'2026-09-10');assert.equal(today(new Date('2026-09-10T16:00:00Z')),'2026-09-11');});
+test('routine completion does not complete next day',()=>{const a=t({daily:true,completions:['2026-09-10']});assert.equal(doneToday(a,'2026-09-10'),true);assert.equal(doneToday(a,'2026-09-11'),false);});
+test('deadlines are China time, independent of emergency and order',()=>{const a=t({due:'2026-09-10T19:00',coordOrder:9});assert.equal(stampMs(a.due),Date.parse('2026-09-10T11:00:00Z'));assert.equal(deadline(a,new Date('2026-09-10T11:01:00Z')),'已逾期');assert.equal(a.emergency,false);assert.equal(a.coordOrder,9);});
+test('undated tasks never become overdue; paused routine not today',()=>{assert.equal(deadline(t()),'');assert.equal(matches(t({daily:true,status:'暂停'}),'today'),false);assert.equal(matches(t({daily:true}),'today'),true);});

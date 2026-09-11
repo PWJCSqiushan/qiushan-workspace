@@ -1,0 +1,2 @@
+# Optional local overrides only. Never commit real secrets.
+# npm run dev supplies local-only authentication on loopback.

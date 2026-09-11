@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1789040065378,
+      "tag": "0000_aromatic_rocket_raccoon",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1789045169788,
+      "tag": "0001_abandoned_arachne",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1789052368633,
+      "tag": "0002_deep_rhodey",
+      "breakpoints": true
+    }
+  ]
+}

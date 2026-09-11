@@ -1,0 +1,17 @@
+@theme inline {
+ --color-muted:#e9e5db;--color-muted-foreground:#5c6862;--color-border:#c8c7ba;
+ --color-input:#c5c4b7;--color-ring:#38695c;--color-popover:#fffcf5;
+ --color-popover-foreground:#21332f;--color-destructive:#9b302c;
+}
+:root{--background:#f5f2ea;--foreground:#203037;--primary:#356d5b;color-scheme:light}
+body{font-family:'Segoe UI','Microsoft YaHei','PingFang SC',system-ui,sans-serif}
+button:focus-visible,a:focus-visible{outline:2px solid #346b5c;outline-offset:2px}
+.error{color:#7b2929;background:#ffe4dc;border-color:#d69482}
+.empty-view{color:#5d6a61;border-color:#b5bdae;background:#f7f4eb}
+.conflict-panel{border-color:#b9905a;background:#fff1d6;color:#543f22}
+.conflict-panel fieldset{border-color:#c7aa7d}.draft-list{border-color:#c5c4b7;background:#f4f0e5}
+.snapshot-row{color:#566858;gap:12px;overflow-wrap:anywhere}
+.restore-preview{background:#fff1d6;border-color:#b79b63;color:#59431a}.restore-preview p{color:#6b572d}
+.history-heading h2{color:#203037}.history-heading span,.global-flow,.global-section h2{color:#5a6d61}
+.group-index{color:#496756;border-color:#a7b8a9}.flow-number{color:#466158}
+@media(max-width:900px){.mobile-default .flow-collapse{color:#365f4f}.mobile-default .flow-info{border-color:#d5ccc0}}
