@@ -12,12 +12,15 @@ export const FLOWS = [
 export const STATUSES = ['准备推进','正在推进','等待外部','一般关注','暂停','已结束'];
 export const COLORS = ['#8faaff','#bc9bf5','#7fbbef','#eab484','#87c8a0','#dfa1b9','#b9ce7d','#9caabf'];
 export type TaskKind = 'project'|'task';
+export type QueueReturn = {complete?:number; deleted?:number};
 export type Task = {
  id:string; version:number; flow:string; title:string; project:string; start:string; end:string; due:string;
  location:string; notes:string; minutes:number|null; checklist:{id:string;text:string;done:boolean}[];
  priority:string; coordLetter:string; coordOrder:number|null; emergency:boolean; flagged:boolean; daily:boolean;
  color:string; status:string; stage:string; boostDate:string; boostAt:string; boostReason:string;
  completions:string[]; createdAt:string; updatedAt:string; deletedAt:string|null;
+ /** The former positive coordination position used when undoing completion or deletion. */
+ queueReturn?:QueueReturn;
  /** Optional compatibility fields. They are deliberately absent from newTask(). */
  kind?:TaskKind; projectId?:string;
 };
@@ -26,10 +29,11 @@ export function newTask(flow='study'):Task { const stamp=new Date().toISOString(
 export const GRADES=['S',...'ABCDEFGHIJKLMNOPQRTUVWXYZ'];
 export function gradeRank(s:string) { if(s==='NA') return 1000; if(!s||s==='未定')return 999; const i=GRADES.indexOf(s[0]); return i<0?998:i*3+(s.endsWith('+')?0:s.endsWith('-')?2:1); }
 export function doneToday(t:Task,date=today()){return t.daily&&t.completions.includes(date);}
-export function rowSort(a:Task,b:Task){return gradeRank(a.priority)-gradeRank(b.priority)||(a.coordOrder??Infinity)-(b.coordOrder??Infinity)||a.createdAt.localeCompare(b.createdAt)||a.id.localeCompare(b.id);}
-export function groupOf(t:Task,date=today()) { return t.emergency?0:t.boostDate===date?1:t.coordLetter==='NA'?5:t.coordOrder!==null?2:t.daily?3:4; }
-export const GROUP_NAMES=['紧急事项','本次先做','执行次序','每日例行','待排次序','NA · 暂不安排'];
-export function globalSort(a:Task,b:Task,date=today()){const g=groupOf(a,date)-groupOf(b,date); if(g)return g; if(groupOf(a,date)===1)return a.boostAt.localeCompare(b.boostAt)||a.id.localeCompare(b.id); return (a.coordOrder??Infinity)-(b.coordOrder??Infinity)||gradeRank(a.coordLetter)-gradeRank(b.coordLetter)||a.createdAt.localeCompare(b.createdAt)||a.id.localeCompare(b.id);}
+function coordOrderRank(value:number|null){return typeof value==='number'&&Number.isSafeInteger(value)&&value>=0?value:Infinity;}
+export function rowSort(a:Task,b:Task){return coordOrderRank(a.coordOrder)-coordOrderRank(b.coordOrder)||gradeRank(a.coordLetter)-gradeRank(b.coordLetter)||gradeRank(a.priority)-gradeRank(b.priority)||a.createdAt.localeCompare(b.createdAt)||a.id.localeCompare(b.id);}
+export function groupOf(t:Task,date=today()) { return t.emergency?0:t.boostDate===date?1:2; }
+export const GROUP_NAMES=['紧急事项','本次先做','普通事项'];
+export function globalSort(a:Task,b:Task,date=today()){const g=groupOf(a,date)-groupOf(b,date);return g||rowSort(a,b);}
 export function stampMs(v:string){return v?Date.parse(v.length===10?v+'T23:59:59+08:00':v+'+08:00'):NaN;}
 export function deadline(t:Task,now=new Date()){const n=stampMs(t.due);if(!Number.isFinite(n)||t.status==='已结束'||doneToday(t,today(now)))return '';return n<+now?'已逾期':n-+now<86400000?'即将截止':'';}
 export function matches(t:Task,filter:string,now=new Date()) { const d=today(now);if(filter==='flag')return t.flagged;if(filter==='overdue')return deadline(t,now)==='已逾期';if(filter==='today')return (t.daily&&t.status!=='暂停')||t.start.slice(0,10)===d||t.due.slice(0,10)===d;if(filter==='week')return [t.start,t.due].some(v=>stampMs(v)>=+now&&stampMs(v)<+now+7*86400000);return true; }

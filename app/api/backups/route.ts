@@ -1,0 +1,3 @@
+import {authorizedStore} from '@/lib/auth';
+import {json,failure,spaceOf} from '@/lib/http';
+export async function GET(request:Request){try{const {store}=await authorizedStore(request),u=new URL(request.url),space=spaceOf(u.searchParams.get('space')||'personal'),id=u.searchParams.get('id');if(id){const row=await store.q('SELECT payload FROM snapshots_v2 WHERE owner_id=? AND space=? AND id=?',store.owner,space,id).first<{payload:string}>();return row?json(JSON.parse(row.payload)):json({error:'快照不存在'},404);}return json((await store.q('SELECT id,created_at FROM snapshots_v2 WHERE owner_id=? AND space=? ORDER BY created_at DESC LIMIT 100',store.owner,space).all()).results);}catch(e){return failure(e);}}

@@ -1,0 +1,437 @@
+/* The analytics surface is isolated under this root so it does not change the
+   compact workflow board or the editor. */
+.analytics-dashboard {
+  --analytics-surface: #fffdf7;
+  --analytics-surface-muted: #f2f0e7;
+  --analytics-border: #d6d8cc;
+  --analytics-text: #203037;
+  --analytics-muted: #637269;
+  --analytics-grid: #dfe4da;
+  --analytics-created: #6e8fd8;
+  --analytics-completed: #438b73;
+  color: var(--analytics-text);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.analytics-header,
+.analytics-controls,
+.analytics-period-note,
+.analytics-card-heading,
+.analytics-coverage {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.analytics-header {
+  align-items: flex-end;
+  padding: 2px 2px 4px;
+}
+
+.analytics-eyebrow {
+  color: var(--analytics-completed);
+  font: 600 10px/1.3 ui-monospace, SFMono-Regular, Consolas, monospace;
+  letter-spacing: 2px;
+  margin: 0 0 5px;
+}
+
+.analytics-header h2 {
+  color: var(--analytics-text);
+  font-size: clamp(23px, 3vw, 31px);
+  letter-spacing: .4px;
+  line-height: 1.1;
+  margin: 0;
+}
+
+.analytics-subtitle {
+  color: var(--analytics-muted);
+  font-size: 12px;
+  margin: 7px 0 0;
+}
+
+.analytics-meta {
+  align-items: flex-end;
+  color: var(--analytics-muted);
+  display: flex;
+  flex-direction: column;
+  font-size: 11px;
+  gap: 5px;
+  text-align: right;
+}
+
+.analytics-controls {
+  align-items: flex-end;
+  background: var(--analytics-surface-muted);
+  border: 1px solid var(--analytics-border);
+  border-radius: 10px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+}
+
+.analytics-control-group {
+  align-items: center;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.analytics-control-label,
+.analytics-select-label,
+.analytics-date-range label {
+  color: var(--analytics-muted);
+  font-size: 12px;
+}
+
+.analytics-segmented {
+  background: color-mix(in srgb, var(--analytics-surface) 80%, transparent);
+  border: 1px solid var(--analytics-border);
+  border-radius: 7px;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+}
+
+.analytics-segmented button {
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  color: var(--analytics-muted);
+  font-size: 12px;
+  padding: 6px 9px;
+  white-space: nowrap;
+}
+
+.analytics-segmented button:hover,
+.analytics-segmented button.selected {
+  background: #dbe9e0;
+  color: #245c4b;
+}
+
+.analytics-date-range {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+}
+
+.analytics-date-range label {
+  align-items: center;
+  display: flex;
+  gap: 4px;
+}
+
+.analytics-date-range input,
+.analytics-select-label select {
+  background: var(--analytics-surface);
+  border: 1px solid var(--analytics-border);
+  border-radius: 6px;
+  color: var(--analytics-text);
+  font-size: 12px;
+  min-height: 31px;
+  padding: 4px 7px;
+}
+
+.analytics-select-label {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.analytics-period-note {
+  color: var(--analytics-muted);
+  font-size: 11px;
+  padding: 0 3px;
+}
+
+.analytics-period-note span:last-child {
+  color: #87948a;
+}
+
+.analytics-metrics {
+  display: grid;
+  gap: 9px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.analytics-metric,
+.analytics-card,
+.analytics-state,
+.analytics-error {
+  background: var(--analytics-surface);
+  border: 1px solid var(--analytics-border);
+  border-radius: 10px;
+}
+
+.analytics-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  padding: 13px 15px;
+}
+
+.analytics-metric span {
+  color: var(--analytics-muted);
+  font-size: 12px;
+}
+
+.analytics-metric strong {
+  color: var(--analytics-text);
+  font-size: 28px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  line-height: 1.1;
+}
+
+.analytics-metric small {
+  color: #8a988e;
+  font-size: 10px;
+}
+
+.analytics-chart-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.analytics-card {
+  min-width: 0;
+  padding: 15px 15px 12px;
+}
+
+.analytics-chart-pie {
+  grid-column: 1 / -1;
+}
+
+.analytics-card-heading {
+  align-items: flex-start;
+  margin-bottom: 3px;
+}
+
+.analytics-card-heading h3 {
+  color: var(--analytics-text);
+  font-size: 15px;
+  font-weight: 650;
+  margin: 0;
+}
+
+.analytics-card-heading p {
+  color: var(--analytics-muted);
+  font-size: 11px;
+  margin: 4px 0 0;
+}
+
+.analytics-card-heading > span {
+  color: #819087;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.analytics-chart {
+  min-height: 280px;
+  width: 100%;
+}
+
+.analytics-pie-wrap {
+  min-height: 250px;
+  width: 100%;
+}
+
+.analytics-chart-empty {
+  align-items: center;
+  color: #8b978e;
+  display: flex;
+  justify-content: center;
+  min-height: 250px;
+  text-align: center;
+}
+
+.analytics-table-card {
+  padding-bottom: 8px;
+}
+
+.analytics-table-scroll {
+  overflow-x: auto;
+}
+
+.analytics-table-scroll table {
+  border-collapse: collapse;
+  font-size: 12px;
+  min-width: 560px;
+  width: 100%;
+}
+
+.analytics-table-scroll th,
+.analytics-table-scroll td {
+  border-bottom: 1px solid #e5e6dd;
+  padding: 9px 8px;
+  text-align: right;
+}
+
+.analytics-table-scroll th:first-child,
+.analytics-table-scroll td:first-child {
+  text-align: left;
+}
+
+.analytics-table-scroll thead th {
+  color: var(--analytics-muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.analytics-table-scroll tbody th {
+  color: var(--analytics-text);
+  font-weight: 500;
+}
+
+.analytics-table-scroll tbody td,
+.analytics-table-scroll tfoot td {
+  color: #42554b;
+  font-variant-numeric: tabular-nums;
+}
+
+.analytics-table-scroll tfoot th,
+.analytics-table-scroll tfoot td {
+  border-bottom: 0;
+  color: var(--analytics-text);
+  font-weight: 650;
+  padding-top: 11px;
+}
+
+.analytics-table-scroll .muted-row {
+  opacity: .43;
+}
+
+.analytics-flow-dot {
+  border-radius: 50%;
+  display: inline-block;
+  height: 8px;
+  margin-right: 7px;
+  vertical-align: 1px;
+  width: 8px;
+}
+
+.analytics-coverage {
+  align-items: flex-start;
+  background: #eef3ed;
+  border: 1px solid #ccdacf;
+  border-radius: 8px;
+  color: #557064;
+  flex-wrap: wrap;
+  font-size: 11px;
+  justify-content: flex-start;
+  line-height: 1.5;
+  padding: 9px 11px;
+}
+
+.analytics-coverage.is-incomplete {
+  background: #fff3dd;
+  border-color: #e2c997;
+  color: #765728;
+}
+
+.analytics-state,
+.analytics-error {
+  color: var(--analytics-muted);
+  padding: 22px;
+  text-align: center;
+}
+
+.analytics-error {
+  background: #fff0eb;
+  border-color: #e0b7a8;
+  color: #813c33;
+  text-align: left;
+}
+
+.analytics-refreshing {
+  color: var(--analytics-muted);
+  font-size: 11px;
+  text-align: right;
+}
+
+@media (max-width: 900px) {
+  .analytics-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .analytics-meta {
+    align-items: flex-start;
+    flex-direction: row;
+    flex-wrap: wrap;
+    text-align: left;
+  }
+
+  .analytics-select-label {
+    margin-left: 0;
+  }
+
+  .analytics-chart-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .analytics-chart-pie {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 620px) {
+  .analytics-controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .analytics-control-group,
+  .analytics-segmented {
+    width: 100%;
+  }
+
+  .analytics-segmented button {
+    flex: 1;
+    padding-inline: 5px;
+  }
+
+  .analytics-date-range,
+  .analytics-date-range label,
+  .analytics-date-range input,
+  .analytics-select-label,
+  .analytics-select-label select {
+    width: 100%;
+  }
+
+  .analytics-date-range {
+    flex-wrap: wrap;
+  }
+
+  .analytics-select-label {
+    justify-content: space-between;
+    margin-left: 0;
+  }
+
+  .analytics-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .analytics-metric strong {
+    font-size: 24px;
+  }
+
+  .analytics-period-note {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .analytics-card {
+    padding-inline: 11px;
+  }
+}

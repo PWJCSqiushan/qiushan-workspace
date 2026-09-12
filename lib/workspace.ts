@@ -1,7 +1,9 @@
 import {FLOWS,STATUSES,newTask,demoTasks,today,stampMs} from './domain.ts';
 import type {Task} from './domain.ts';
+import type {TaskEvent} from './analytics.ts';
+export type HistoryData={version:1;events:TaskEvent[];coverage:{since:string;incomplete:boolean;unknown:number}};
 export type Settings={density:'compact'|'comfortable'};
-export type Workspace={schemaVersion:1;space:'personal'|'demo';revision:number;tasks:Task[];settings:Settings};
+export type Workspace={schemaVersion:1;space:'personal'|'demo';revision:number;tasks:Task[];settings:Settings;queueVersion?:number;coordinationReady?:boolean;history?:HistoryData};
 export class AppError extends Error{status:number;constructor(message:string,status=400){super(message);this.status=status;}}
 function ensure(ok:unknown,message:string):asserts ok{if(!ok)throw new AppError(message);}
 function str(v:unknown,max=1000):v is string{return typeof v==='string'&&v.length<=max;}
@@ -20,6 +22,7 @@ export function validateTask(v:unknown):Task{
  ensure(!(t.kind==='project'&&t.projectId&&t.projectId!==''),'项目不能关联父项目');
  ensure(!t.projectId||t.projectId!==t.id,'事项不能关联自己');
  ensure(t.coordOrder===null||(Number.isSafeInteger(t.coordOrder)&&t.coordOrder>=0&&t.coordOrder<=999999),'协调数字须为非负整数');
+ if(t.queueReturn!==undefined)ensure(t.queueReturn&&typeof t.queueReturn==='object'&&Object.keys(t.queueReturn).every(k=>['complete','deleted'].includes(k))&&Object.values(t.queueReturn).every(n=>Number.isSafeInteger(n)&&Number(n)>0&&Number(n)<=999999),'编号恢复信息无效');
  ensure(t.coordLetter!=='NA'||t.coordOrder===null,'NA 不应同时带有执行数字');
  ensure(t.minutes===null||(Number.isFinite(t.minutes)&&t.minutes>=0&&t.minutes<=1000000),'预计耗时须为非负分钟数');
  for(const k of ['emergency','flagged','daily'] as const)ensure(typeof t[k]==='boolean',`${k} 格式无效`);

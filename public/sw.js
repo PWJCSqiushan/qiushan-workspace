@@ -1,4 +1,4 @@
-const CACHE='qiushan-shell-v3-compact-3';
+const CACHE='qiushan-shell-v4-coordination-1';
 const STATIC=['/favicon.svg','/manifest.webmanifest','/icon-192.png','/icon-512.png'];
 const asset=path=>path.startsWith('/_next/static/')||STATIC.includes(path);
 async function cacheAsset(cache,path){const u=new URL(path,self.location.origin);if(u.origin!==self.location.origin||!asset(u.pathname))return;const r=await fetch(u,{redirect:'manual'});if(!r.ok||r.type==='opaqueredirect'||r.headers.get('content-type')?.includes('text/html'))throw new Error('App resource unavailable');await cache.put(u,r);}

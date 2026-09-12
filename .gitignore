@@ -23,3 +23,6 @@ wrangler.local.jsonc
 *.sqlite*
 *.db
 .DS_Store
+
+!app/api/backups/
+!app/api/backups/route.ts

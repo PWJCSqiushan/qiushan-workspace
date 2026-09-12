@@ -1,11 +1,11 @@
 "use client";
 import {Check,Plus} from 'lucide-react';
 import {TaskCard} from '@/components/task-card';
-import {FLOWS,type Task,doneToday,today,rowSort} from '@/lib/domain';
+import {FLOWS,type Task,doneToday,today,globalSort} from '@/lib/domain';
 
 type Props={visible:Task[];flow:string;now:Date;filtering:boolean;busy:boolean;ready:boolean;onOpen:(task:Task)=>void;onFlag:(task:Task)=>void;onComplete:(task:Task)=>void;onCreate:(flow:string)=>void};
 export function FlowLane({visible,flow,now,filtering,busy,ready,onOpen,onFlag,onComplete,onCreate}:Props){
- const items=visible.filter(t=>t.flow===flow).sort(rowSort);
+ const items=visible.filter(t=>t.flow===flow).sort((a,b)=>globalSort(a,b,today(now)));
  const urgent=items.filter(t=>t.emergency&&!doneToday(t,today(now)));
  const queue=items.filter(t=>!urgent.includes(t));
  const label=FLOWS.find(f=>f.id===flow)?.name||'';
