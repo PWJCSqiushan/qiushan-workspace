@@ -11,6 +11,7 @@ export const FLOWS = [
 ];
 export const STATUSES = ['准备推进','正在推进','等待外部','一般关注','暂停','已结束'];
 export const COLORS = ['#8faaff','#bc9bf5','#7fbbef','#eab484','#87c8a0','#dfa1b9','#b9ce7d','#9caabf'];
+export type {Category} from './categories.ts';
 export type TaskKind = 'project'|'task';
 export type QueueReturn = {complete?:number; deleted?:number};
 export type Task = {
@@ -22,7 +23,7 @@ export type Task = {
  /** The former positive coordination position used when undoing completion or deletion. */
  queueReturn?:QueueReturn;
  /** Optional compatibility fields. They are deliberately absent from newTask(). */
- kind?:TaskKind; projectId?:string;
+ kind?:TaskKind; projectId?:string; categoryId?:string;
 };
 export function today(now=new Date()) { return new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(now); }
 export function newTask(flow='study'):Task { const stamp=new Date().toISOString(); return {id:crypto.randomUUID(), version:0, flow,title:'',project:'',start:'',end:'',due:'',location:'',notes:'',minutes:null,checklist:[],priority:'',coordLetter:'',coordOrder:null,emergency:false,flagged:false,daily:false,color:FLOWS.find(f=>f.id===flow)?.color||COLORS[0],status:'准备推进',stage:'',boostDate:'',boostAt:'',boostReason:'',completions:[],createdAt:stamp,updatedAt:stamp,deletedAt:null}; }

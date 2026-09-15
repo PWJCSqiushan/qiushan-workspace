@@ -111,3 +111,127 @@ body{background:var(--workspace-bg);color:var(--workspace-ink)}
 .task.redesign-task-card .task-footer{gap:3px}
 .task.redesign-task-card .task-signals{gap:2px}
 .task.redesign-task-card:has(.grades-long) .task-footer{right:153px}
+
+/* Category labels share the lower information row with status and priorities. */
+.task.redesign-task-card .category-badge{
+ position:absolute;left:94px;bottom:7px;z-index:2;display:inline-flex;align-items:center;justify-content:center;
+ max-width:54px;min-height:19px;padding:2px 7px;border:1px solid #00000018;border-radius:5px;
+ box-sizing:border-box;font-size:11px;line-height:15px;font-weight:800;letter-spacing:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+ box-shadow:0 1px 2px #00000014;pointer-events:none;
+}
+.task.redesign-task-card:has(.task-complete) .category-badge{left:95px}
+.task.redesign-task-card:has(.grades-long) .category-badge{left:84px;max-width:49px}
+.task.redesign-task-card .task-status-compact{gap:2px;min-width:30px;color:var(--task-muted)}
+.task.redesign-task-card .task-status-compact svg{width:12px;height:12px}
+.task.redesign-task-card .status-compact-mark{font-size:8px;line-height:12px;letter-spacing:0}
+
+/* The workflow entry point stays small enough for the fixed 102px desktop row. */
+.flow-manage{display:inline-flex;align-items:center;justify-content:center;align-self:flex-start;width:28px;height:28px;margin-top:2px;padding:4px;border:0;border-radius:5px;background:transparent;color:#41675b;cursor:pointer}
+.flow-manage svg{width:16px;height:16px}
+.flow-manage:hover{background:transparent;color:#173f32}.flow-manage:focus-visible{outline:2px solid #41675b;outline-offset:2px}
+.category-local-preview-notice{display:flex;align-items:center;gap:7px;margin:8px 0 10px;padding:7px 10px;border:1px solid #d8bd79;border-radius:7px;background:#fff8df;color:#7b5a1c;font-size:12px;font-weight:650}
+.category-local-preview-notice svg{width:14px;height:14px}
+.category-restore-note{font-weight:650;color:#795c24!important}
+
+/* First-screen workflow and category controls in TaskEditor. */
+.editor-panel.editor-redesign .editor-workflow-fields{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:0 14px}
+.editor-panel.editor-redesign .category-editor-label-row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.editor-panel.editor-redesign .category-manage-link{border:0;padding:0;background:none;color:var(--editor-primary);font-size:12px;font-weight:700;text-decoration:underline;text-underline-offset:3px}
+.editor-panel.editor-redesign .category-manage-link:disabled{cursor:not-allowed;opacity:.55}
+.editor-panel.editor-redesign .category-editor-hint,.editor-panel.editor-redesign .category-editor-notice{display:block;margin-top:6px;color:var(--editor-muted);font-size:11px;line-height:1.5}
+.editor-panel.editor-redesign .category-editor-notice{color:var(--editor-gold);font-weight:650}
+
+/* Category manager uses the same warm light surfaces as the editor. */
+.category-manager-panel{width:min(560px,100vw)!important;max-width:560px!important;height:100dvh;min-height:100dvh;gap:0!important;overflow:hidden;padding-bottom:env(safe-area-inset-bottom);border-left:1px solid #ded8ce!important;background:#fffdf8!important;color:#253331!important;color-scheme:light;box-shadow:-20px 0 70px rgb(36 49 45 / 14%)}
+.category-manager-panel [data-slot='sheet-title'],.category-manager-panel [data-slot='sheet-description']{color:#253331}
+.category-manager-header{flex:0 0 auto;padding:18px 26px 16px!important;border-bottom:1px solid #ded8ce;background:#fffdf8}
+.category-manager-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+.category-manager-heading [data-slot='sheet-title']{margin-bottom:5px;font-size:22px!important;font-weight:700}
+.category-manager-heading [data-slot='sheet-description']{color:#6d7771;font-size:13px}
+.category-manager-scroll{min-height:0;flex:1;overflow-y:auto;padding:20px 26px 30px;overscroll-behavior:contain}
+.category-manager-intro{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px;padding:14px 15px;border:1px solid #ded8ce;border-radius:10px;background:#f7f4ee}
+.category-manager-intro strong{display:block;color:#253331;font-size:14px}
+.category-manager-intro p{margin:5px 0 0;color:#6d7771;font-size:12px;line-height:1.6}
+.category-manager-error{margin:10px 0;padding:10px 12px;border:1px solid #d69482;border-radius:8px;background:#ffe4dc;color:#7b2929;font-size:13px;line-height:1.5}
+.category-form{margin-bottom:22px;padding:16px;border:1px solid #bcb3a6;border-radius:11px;background:#fff}
+.category-form-title{display:flex;align-items:center;justify-content:space-between;margin-bottom:13px;color:#253331;font-size:15px;font-weight:750}
+.category-icon-button{display:grid;width:32px;height:32px;place-items:center;border:1px solid #ded8ce;border-radius:7px;background:#fff;color:#6d7771}
+.category-icon-button:hover{border-color:#2f7569;color:#2f7569}
+.category-icon-button svg{width:15px;height:15px}
+.category-field{display:block;margin-bottom:13px;color:#6d7771;font-size:13px;font-weight:650}
+.category-field-hint{float:right;color:#9a6d18;font-size:11px;font-weight:500}
+.category-field input{width:100%;min-height:44px;margin-top:6px;padding:9px 11px;border:1px solid #bcb3a6;border-radius:8px;outline:none;background:#fff;color:#253331;font-size:16px}
+.category-field input:focus{border-color:#2f7569;box-shadow:0 0 0 3px rgb(47 117 105 / 16%)}
+.category-color-label{margin:5px 0 8px;color:#253331;font-size:13px;font-weight:750}
+.category-palette{display:flex;flex-wrap:wrap;align-items:center;gap:9px}
+.category-color-choice{width:30px;height:30px;padding:0;border:2px solid transparent;border-radius:50%;box-shadow:0 0 0 1px #0000001c;cursor:pointer}
+.category-color-choice:hover,.category-color-choice.selected{outline:2px solid #2f7569;outline-offset:2px}
+.category-custom-color{display:grid;width:32px;height:32px;place-items:center;border:1px dashed #9ea9a1;border-radius:50%;background:#f7f4ee;color:#557066;cursor:pointer;overflow:hidden}
+.category-custom-color svg{width:15px;height:15px;pointer-events:none}
+.category-custom-color input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+.category-preview-box{display:flex;align-items:center;gap:10px;margin-top:16px;padding:10px 11px;border:1px dashed #c9c2b7;border-radius:8px;background:#f7f4ee}
+.category-preview-box>span{color:#6d7771;font-size:12px;font-weight:650}
+.category-preview-box small{min-width:0;overflow:hidden;color:#6d7771;font-size:11px;text-overflow:ellipsis;white-space:nowrap}
+.category-preview-box .category-badge{display:inline-flex;min-height:22px;padding:3px 9px;border-radius:5px;font-size:11px;font-weight:800;white-space:nowrap}
+.category-form-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:15px;padding-top:13px;border-top:1px solid #ded8ce}
+.category-list-heading{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin:4px 0 9px;color:#253331;font-size:14px;font-weight:750}
+.category-list-heading small{color:#6d7771;font-size:11px;font-weight:500}
+.category-empty{display:flex;align-items:center;gap:8px;padding:24px 12px;border:1px dashed #c9c2b7;border-radius:9px;background:#f7f4ee;color:#6d7771;font-size:13px}
+.category-empty svg{width:18px;height:18px;color:#2f7569}
+.category-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:11px;margin:7px 0;padding:10px 11px;border:1px solid #ded8ce;border-radius:9px;background:#fff}
+.category-row.archived{background:#f5f2ec;opacity:.82}
+.category-row .category-badge{display:inline-flex;min-width:40px;min-height:23px;justify-content:center;padding:3px 8px;border-radius:5px;font-size:11px;font-weight:800;white-space:nowrap}
+.category-row-copy{min-width:0}
+.category-row-copy strong{display:block;overflow:hidden;color:#253331;font-size:13px;text-overflow:ellipsis;white-space:nowrap}
+.category-row-copy small{display:block;margin-top:3px;overflow:hidden;color:#6d7771;font-size:11px;text-overflow:ellipsis;white-space:nowrap}
+.category-row-actions{display:flex;gap:6px}
+.category-row-actions .btn{min-height:32px;height:32px;padding:0 8px;border-color:#c9c2b7;background:#fff;color:#41675b;font-size:11px}
+.category-row-actions .btn svg{width:13px;height:13px}
+@media(max-width:600px){
+ .editor-panel.editor-redesign .editor-workflow-fields{grid-template-columns:minmax(0,1fr)}
+ .category-manager-header{padding:16px 15px 14px!important}.category-manager-scroll{padding:15px 15px 24px}.category-manager-intro{align-items:stretch;flex-direction:column;gap:10px}.category-manager-intro .btn{align-self:flex-start}.category-row{grid-template-columns:auto minmax(0,1fr)}.category-row-actions{grid-column:1/-1;justify-content:flex-end}.category-row-actions .btn{min-height:40px;height:40px}.category-preview-box{flex-wrap:wrap}.category-preview-box small{flex-basis:100%}
+}
+
+/* The fixed card keeps the category in the lower middle gap. The long
+   coordination variant reserves a measured priority column before shrinking
+   its type; the six digit value remains a complete, readable string. */
+.task.redesign-task-card .task-footer .category-badge{
+ position:static!important;left:auto!important;bottom:auto!important;z-index:auto;
+ display:inline-flex;flex:0 0 auto;align-items:center;justify-content:center;
+ width:max-content;max-width:44px;min-width:0;min-height:19px;padding:1px 3px;
+ box-sizing:border-box;font-size:11px;line-height:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+ box-shadow:0 1px 2px #00000014;pointer-events:auto;cursor:help;
+}
+.task.redesign-task-card:has(.task-complete) .task-footer{right:112px}
+.task.redesign-task-card:has(.grades-long) .task-priority-grid{
+ width:112px;max-width:112px;gap:5px;overflow:visible;
+}
+.task.redesign-task-card:has(.grades-long) .priority-value,
+.task.redesign-task-card:has(.grades-long) .coord-order{
+ font-size:14px;line-height:27px;letter-spacing:-.3px;
+}
+.task.redesign-task-card:has(.grades-long) .grade-letter{
+ min-width:28px;height:27px;padding:0;line-height:27px;font-size:14px;
+}
+.task.redesign-task-card:has(.grades-long) .task-footer{
+ right:135px;gap:3px;
+}
+.task.redesign-task-card:has(.grades-long) .task-footer .task-status-compact{
+ flex:0 0 12px;min-width:12px;width:12px;
+}
+.task.redesign-task-card:has(.grades-long) .task-status-compact .status-compact-mark{
+ display:none;
+}
+.task.redesign-task-card:has(.grades-long) .task-footer .task-status-compact svg{
+ display:block!important;width:12px;height:12px;
+}
+.task.redesign-task-card:has(.grades-long) .task-footer .task-signals{
+ position:static;left:auto;top:auto;display:flex;align-items:center;gap:1px;
+ height:auto;white-space:nowrap;pointer-events:none;
+}
+.task.redesign-task-card:has(.grades-long) .task-footer .task-signals svg{
+ width:10px;height:10px;
+}
+.task.redesign-task-card:has(.grades-long) .task-footer .task-signals .signal-em{
+ font-size:7px;line-height:11px;
+}

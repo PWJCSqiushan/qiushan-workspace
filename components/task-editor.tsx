@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import {COLORS, FLOWS, STATUSES, doneToday, today} from '@/lib/domain';
 import type {Task} from '@/lib/domain';
+import type {Category} from '@/lib/categories';
 import type {Workspace} from '@/lib/workspace';
 import {Button} from '@/components/ui/button';
 import {Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle} from '@/components/ui/sheet';
@@ -27,7 +28,7 @@ import {EditorDateField} from '@/components/editor-date-field';
 
 export type TaskKind = 'project' | 'task';
 export type EditorSyncState = 'draft' | 'pending' | 'synced' | 'failed';
-export type TaskEditorTask = Task & {kind?: TaskKind; projectId?: string};
+export type TaskEditorTask = Task & {kind?: TaskKind; projectId?: string; categoryId?: string};
 
 export type TaskEditorProps = {
   task: Task;
@@ -41,6 +42,8 @@ export type TaskEditorProps = {
   onClose: () => void;
   onCopy: (task: Task) => void;
   tasks?: Task[];
+  categories?: readonly Category[];
+  onManageCategories?: (flow: string) => void;
   syncState?: EditorSyncState;
   syncError?: string;
   now?: Date;
@@ -143,9 +146,26 @@ export function TaskEditor({
   syncState,
   syncError,
   now,
+  categories = [],
+  onManageCategories,
 }: TaskEditorProps) {
   'use no memo'; // This editor coordinates mutable draft and outbox refs.
-  const [draft, setDraft] = useState<TaskEditorTask>(() => editorTask(structuredClone(task)));
+  const [draft, setDraft] = useState<TaskEditorTask>(() => {
+    const initial = editorTask(structuredClone(task));
+    if (
+      initial.version === 0 &&
+      initial.categoryId &&
+      categories.some(
+        (category) =>
+          category.id === initial.categoryId &&
+          category.flow === initial.flow &&
+          category.archived,
+      )
+    ) {
+      initial.categoryId = '';
+    }
+    return initial;
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [conflict, setConflict] = useState(false);
@@ -153,6 +173,7 @@ export function TaskEditor({
   const [draftStatus, setDraftStatus] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
   const [internalSync, setInternalSync] = useState<EditorSyncState>(task.version ? 'synced' : 'draft');
   const [expanded, setExpanded] = useState<SectionState>(() => initialSections(editorTask(task)));
+  const [categoryNotice, setCategoryNotice] = useState('');
 
   const current = useRef(draft);
   current.current = draft;
@@ -218,6 +239,13 @@ export function TaskEditor({
       draft.completions.length ? '每日记录 ' + draft.completions.length + ' 天' : '',
     ],
     '备注、清单与卡片设置',
+  );
+  const categoryId = draft.categoryId || '';
+  const selectedCategory = categories.find((category) => category.id === categoryId && category.flow === draft.flow);
+  const flowCategories = categories.filter(
+    (category) =>
+      category.flow === draft.flow &&
+      (!category.archived || (draft.version > 0 && category.id === categoryId)),
   );
 
   useEffect(() => {
@@ -296,10 +324,24 @@ export function TaskEditor({
     document.addEventListener('keydown', shortcut);
     return () => document.removeEventListener('keydown', shortcut);
   }, []);
-  function change<K extends keyof Task>(key: K, value: Task[K]) {
+  function change<K extends keyof TaskEditorTask>(key: K, value: TaskEditorTask[K]) {
     setDraft((currentDraft) => ({...currentDraft, [key]: value}));
     setDraftStatus('idle');
     setError('');
+  }
+
+  function chooseFlow(nextFlow: string) {
+    const changedFlow = nextFlow !== draft.flow;
+    const hadCategory = Boolean(draft.categoryId);
+    setDraft((currentDraft) => ({...currentDraft, flow: nextFlow, ...(changedFlow && hadCategory ? {categoryId: ''} : {})}));
+    setCategoryNotice(changedFlow && hadCategory ? '已换工作流，原分类已清空；请为目标工作流选择分类。' : '');
+    setDraftStatus('idle');
+    setError('');
+  }
+
+  function chooseCategory(categoryId: string) {
+    change('categoryId', categoryId);
+    setCategoryNotice('');
   }
   function validate(taskToSave: TaskEditorTask) {
     if (!taskToSave.title.trim()) {
@@ -507,6 +549,25 @@ export function TaskEditor({
                 />
               </label>
 
+              <div className="editor-workflow-fields">
+                <label className="field">
+                  所属工作流
+                  <select aria-label="所属工作流" value={draft.flow} onChange={(event) => chooseFlow(event.currentTarget.value)}>
+                    {FLOWS.map((flow) => <option value={flow.id} key={flow.id}>{flow.name}</option>)}
+                  </select>
+                </label>
+                <div className="field category-editor-field">
+                  <div className="category-editor-label-row"><span>分类</span><button type="button" className="category-manage-link" onClick={() => onManageCategories?.(draft.flow)} disabled={busy || !onManageCategories}>管理分类</button></div>
+                  <select aria-label="分类" value={categoryId} onChange={(event) => chooseCategory(event.currentTarget.value)}>
+                    <option value="">不设置分类</option>
+                    {categoryId && !selectedCategory && <option value={categoryId}>当前分类（目录未读取）</option>}
+                    {flowCategories.map((category) => <option value={category.id} key={category.id} disabled={category.archived}>{category.name}{category.displayLabel && category.displayLabel !== category.name ? '（卡面：' + category.displayLabel + '）' : ''}{category.archived ? ' · 已停用' : ''}</option>)}
+                  </select>
+                  {selectedCategory?.archived && <span className="category-editor-hint">当前分类已停用，旧卡仍保留；新选择不会提供它。</span>}
+                   {categoryNotice && <output className="category-editor-notice">{categoryNotice}</output>}
+                </div>
+              </div>
+
 
 
               {draft.version > 0 && !draft.deletedAt && draft.status !== '已结束' && (
@@ -548,7 +609,6 @@ export function TaskEditor({
               <summary><span>事项与上下文</span><span className="section-summary">{contextSummary}</span></summary>
               <div className="editor-section-body">
                 <div className="field-grid">
-                  <label className="field">所属工作流<select aria-label="所属工作流" value={draft.flow} onChange={(event) => change('flow', event.currentTarget.value)}>{FLOWS.map((flow) => <option value={flow.id} key={flow.id}>{flow.name}</option>)}</select></label>
                   <label className="field">状态<select aria-label="状态" value={draft.status} onChange={(event) => change('status', event.currentTarget.value)}>{STATUSES.map((status) => <option value={status} key={status}>{status}</option>)}</select></label>
                 </div>
                 <label className="field">直属 / 项目文本<input aria-label="直属 / 项目文本" value={draft.project} maxLength={1000} onChange={(event) => change('project', event.currentTarget.value)} placeholder="例如：课程名称、工作组或所属事项" /></label>
