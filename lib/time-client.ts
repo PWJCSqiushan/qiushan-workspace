@@ -1,0 +1,29 @@
+import {localGet,localPut,localRemove,localList} from './device-db.ts';
+export type TimeCategory={id:string;name:string;color:string;active:boolean};
+export type TimeInterval={id:string;start:string;end:string;categoryId:string;note:string;sourceKey?:string;manual?:boolean;estimated?:boolean};
+export type TimePlan=TimeInterval&{status:string;attendance?:'on_time'|'late_under_5'|'late_over_5'|'absent'|'excused'};
+export type TimeSnapshot={owner:string;version:number;categories:TimeCategory[];intervals:TimeInterval[];plans:TimePlan[];timer:{id?:string;start:string;categoryId:string;note:string}|null;imports:{id:string;source:string;accepted?:number;skipped?:number;createdAt?:string}[];corrections:{id:string;createdAt?:string;kind?:string;undone?:boolean}[]};
+export type TimeMutation=Record<string,unknown>&{type:string};
+export type PendingTime={operationId:string;baseVersion:number;mutation:TimeMutation;state:'queued'|'conflict'|'failed';error?:string;createdAt:string};
+type TimeSession={owner:string;expiresAt:number};
+export class TimeRequestError extends Error{constructor(message:string,public status:number,public payload:Record<string,unknown>){super(message);}}
+export async function timeRequest<T>(url:string,init?:RequestInit):Promise<T>{const response=await fetch(url,{cache:'no-store',redirect:'manual',signal:AbortSignal.timeout(15000),...init});if(!response.headers.get('content-type')?.includes('application/json'))throw new TimeRequestError('登录已失效，请重新登录。草稿仍保留在本机。',401,{});const data=await response.json() as Record<string,unknown>;if(!response.ok)throw new TimeRequestError(String(data.error||'请求失败'),response.status,data);return data as T;}
+export class TimeClient{
+ session:TimeSession|null=null; data:TimeSnapshot|null=null; pending:PendingTime[]=[]; message='正在连接'; blocked=false; stopped=false; private busy:Promise<void>|null=null;
+ constructor(public space:'personal'|'demo',private notify:()=>void){}
+ scope(){return this.session?.owner+'/'+this.space;}
+ emit(){if(!this.stopped)this.notify();}
+ async start(){try{this.session=await timeRequest<TimeSession>('/api/session');await localPut('time/session',this.session);}catch(error){if(error instanceof TimeRequestError){this.blocked=true;this.message=error.message;this.emit();return;}const prior=await localGet<TimeSession>('time/session');if(!prior||prior.expiresAt<=Date.now()){this.blocked=true;this.message='联网登录后可恢复本机草稿';this.emit();return;}this.session=prior;this.message='离线 · 本机缓存';}this.data=await localGet<TimeSnapshot>('time/cache/'+this.scope())||null;await this.loadPending();this.emit();await this.sync();}
+ async loadPending(){this.pending=(await localList<PendingTime>('time/outbox/'+this.scope()+'/')).map(r=>r.value).sort((a,b)=>a.createdAt.localeCompare(b.createdAt));}
+ async saveDraft(value:unknown){if(this.session)await localPut('time/draft/'+this.scope(),value);}
+ async draft<T>(){return this.session?localGet<T>('time/draft/'+this.scope()):undefined;}
+ async enqueue(mutation:TimeMutation){if(!this.session||this.blocked||!this.data)throw new Error('请先联网登录并加载时间看板');const item:PendingTime={operationId:crypto.randomUUID(),baseVersion:this.data.version+this.pending.length,mutation,state:'queued',createdAt:new Date().toISOString()};await localPut('time/outbox/'+this.scope()+'/'+item.operationId,item);await this.loadPending();this.message='已保存到本机 · 等待同步';this.emit();await this.sync();}
+ async sync(){if(this.busy)return this.busy;if(!this.session||this.blocked||this.stopped)return;this.busy=this.run();try{await this.busy;}finally{this.busy=null;}}
+ private async run(){try{for(const item of this.pending){if(item.state!=='queued')break;try{await timeRequest('/api/time/mutations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({space:this.space,operationId:item.operationId,baseVersion:item.baseVersion,mutation:item.mutation})});await localRemove('time/outbox/'+this.scope()+'/'+item.operationId);}catch(e){if(e instanceof TimeRequestError&&e.status!==401){item.state=e.status===409?'conflict':'failed';item.error=e.message;await localPut('time/outbox/'+this.scope()+'/'+item.operationId,item);}throw e;}}const latest=await timeRequest<TimeSnapshot>('/api/time/sync?space='+this.space);if(latest.owner!==this.session?.owner)throw new TimeRequestError('登录身份已改变，原草稿已保留',401,{});if(!this.data||this.data.version!==latest.version){this.data=latest;await localPut('time/cache/'+this.scope(),latest);}this.message='已同步 · 时间版本 '+latest.version;}catch(e){if(e instanceof TimeRequestError){this.message=e.message;if(e.status===401){this.blocked=true;this.data=null;}else if(e.status===409){try{this.data=await timeRequest<TimeSnapshot>('/api/time/sync?space='+this.space);await localPut('time/cache/'+this.scope(),this.data);}catch{/* retain draft */}}}else this.message='离线或网络不可用 · 本机草稿已保留';}finally{await this.loadPending();this.emit();}}
+ async resolve(id:string,retry:boolean){const item=this.pending.find(p=>p.operationId===id);if(!item||!this.data)return;await localPut('time/archive/'+this.scope()+'/'+id,item);await localRemove('time/outbox/'+this.scope()+'/'+id);await this.loadPending();if(retry)await this.enqueue(item.mutation);else{this.message='已保留到本机修正归档';this.emit();}}
+}
+export const shanghaiDate=(time=Date.now())=>new Date(time+8*3600000).toISOString().slice(0,10);
+export const dayStart=(day:string)=>Date.parse(day+'T00:00:00+08:00');
+export const localClock=(iso:string)=>new Date(Date.parse(iso)+8*3600000).toISOString().slice(11,16);
+export const atLocal=(day:string,time:string)=>new Date(day+'T'+time+':00+08:00').toISOString();
+export function clippedMinutes(rows:TimeInterval[],start:number,end:number,now=Date.now()){const cap=Math.min(end,now);return rows.reduce((total,row)=>total+Math.max(0,Math.min(Date.parse(row.end),cap)-Math.max(Date.parse(row.start),start))/60000,0);}

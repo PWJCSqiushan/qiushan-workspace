@@ -1,6 +1,7 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { BoardSwitch } from '@/components/board-switch';
 import {
   Mountain,
   Plus,
@@ -89,6 +90,8 @@ export default function Home() {
   const [updateReady, setUpdateReady] = useState(false);
   useEffect(() => {
     const e = new SyncEngine();
+    const selectedSpace = localStorage.getItem('qs-selected-space');
+    if (selectedSpace === 'demo') { e.space = 'demo'; setSpace('demo'); }
     engine.current = e;
     e.start((s) => {
       setSyncState(s);
@@ -163,6 +166,7 @@ export default function Home() {
   async function chooseSpace(next: 'personal' | 'demo') {
     if (editor || busy) return;
     setSpace(next);
+    localStorage.setItem('qs-selected-space', next);
     setFilter('all');
     setUndo(null);
     setImportData(null);
@@ -365,7 +369,7 @@ export default function Home() {
       const w = await api('/api/export?space=' + space);
       download(
         { ...w, exportedAt: new Date().toISOString() },
-        `个人工作台-${space}-${today()}.json`,
+        `丘山工作台-${space}-${today()}.json`,
       );
       setMessage('备份已导出');
     } catch (e) {
@@ -512,8 +516,8 @@ export default function Home() {
             <Mountain />
           </div>
           <div>
-            <h1>个人工作台</h1>
-            <div className="eyebrow">PERSONAL WORKSPACE</div>
+            <h1>丘山 · 个人工作台<BoardSwitch current="workflow" space={space}/></h1>
+            <div className="eyebrow">QIUSHAN / PERSONAL WORKSPACE</div>
           </div>
         </div>
         <div className="head-actions">

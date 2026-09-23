@@ -26,3 +26,8 @@ wrangler.local.jsonc
 
 !app/api/backups/
 !app/api/backups/route.ts
+
+# Local Garmin credentials and receipts
+/scripts/garmin/config.json
+/scripts/garmin/*.pending
+__pycache__/

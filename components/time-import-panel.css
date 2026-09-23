@@ -1,0 +1,276 @@
+.ti-panel {
+  --ti-bg: #111417;
+  --ti-surface: #171b1f;
+  --ti-surface-2: #1d2328;
+  --ti-border: #394149;
+  --ti-text: #edf1ef;
+  --ti-muted: #9ba6ac;
+  --ti-accent: #9fd2be;
+  --ti-danger: #e58e90;
+  --ti-warning: #e4cd7c;
+  background: var(--ti-bg);
+  border: 1px solid var(--ti-border);
+  color: var(--ti-text);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  padding: clamp(14px, 2vw, 24px);
+}
+
+.ti-header,
+.ti-preview-heading,
+.ti-preview-actions {
+  align-items: center;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+}
+
+.ti-eyebrow {
+  color: var(--ti-accent);
+  font: 600 10px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace;
+  letter-spacing: 2px;
+  margin: 0 0 5px;
+}
+
+.ti-header h2 {
+  font-size: clamp(22px, 4vw, 32px);
+  letter-spacing: .02em;
+  line-height: 1.1;
+  margin: 0;
+}
+
+.ti-subtitle,
+.ti-hint,
+.ti-footnote,
+.ti-preview-heading small {
+  color: var(--ti-muted);
+  font-size: 12px;
+  line-height: 1.55;
+  margin: 6px 0 0;
+}
+
+.ti-source-state {
+  color: var(--ti-muted);
+  font: 11px/1.3 ui-monospace, SFMono-Regular, Consolas, monospace;
+  text-align: right;
+}
+
+.ti-tabs {
+  border-bottom: 1px solid var(--ti-border);
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+}
+
+.ti-tabs button,
+.ti-button,
+.ti-remove {
+  background: transparent;
+  border: 1px solid var(--ti-border);
+  border-radius: 5px;
+  color: var(--ti-text);
+  cursor: pointer;
+  font: inherit;
+  min-height: 34px;
+  padding: 7px 11px;
+}
+
+.ti-tabs button {
+  border-bottom: 0;
+  border-radius: 5px 5px 0 0;
+  color: var(--ti-muted);
+  white-space: nowrap;
+}
+
+.ti-tabs button:hover,
+.ti-tabs button.is-active {
+  background: var(--ti-surface-2);
+  color: var(--ti-accent);
+}
+
+.ti-button:hover,
+.ti-remove:hover {
+  border-color: var(--ti-accent);
+}
+
+.ti-button:focus-visible,
+.ti-tabs button:focus-visible,
+.ti-remove:focus-visible,
+.ti-panel input:focus-visible,
+.ti-panel textarea:focus-visible,
+.ti-panel select:focus-visible {
+  outline: 2px solid var(--ti-accent);
+  outline-offset: 2px;
+}
+
+.ti-button-primary {
+  background: var(--ti-accent);
+  border-color: var(--ti-accent);
+  color: #0b1712;
+  font-weight: 650;
+}
+
+.ti-form-block {
+  background: var(--ti-surface);
+  border: 1px solid var(--ti-border);
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  padding: 14px;
+}
+
+.ti-field {
+  color: var(--ti-muted);
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  gap: 6px;
+}
+
+.ti-panel input,
+.ti-panel textarea,
+.ti-panel select {
+  background: #0d1012;
+  border: 1px solid var(--ti-border);
+  border-radius: 4px;
+  box-sizing: border-box;
+  color: var(--ti-text);
+  font: inherit;
+  min-height: 34px;
+  padding: 7px 8px;
+  width: 100%;
+}
+
+.ti-panel textarea {
+  min-height: 76px;
+  resize: vertical;
+}
+
+.ti-grid-2 {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.ti-file-button {
+  align-items: center;
+  border: 1px dashed var(--ti-border);
+  color: var(--ti-accent);
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  padding: 11px;
+}
+
+.ti-file-button input {
+  border: 0;
+  min-height: 28px;
+  padding: 0;
+  width: auto;
+}
+
+.ti-ocr-viewport {
+  background: #080a0b;
+  border: 1px solid var(--ti-border);
+  max-height: 420px;
+  overflow: auto;
+  position: relative;
+}
+
+.ti-ocr-viewport img {
+  display: block;
+  height: auto;
+  max-width: 100%;
+  width: 100%;
+}
+
+.ti-ocr-box {
+  border: 1px solid var(--ti-accent);
+  box-sizing: border-box;
+  pointer-events: none;
+  position: absolute;
+}
+
+.ti-ocr-box.is-low {
+  border-color: var(--ti-danger);
+  border-style: dashed;
+}
+
+.ti-issues {
+  border-left: 3px solid var(--ti-warning);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 7px 11px;
+}
+
+.ti-issues p {
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.ti-issues .is-error { color: var(--ti-danger); }
+.ti-issues .is-warning { color: var(--ti-warning); }
+
+.ti-preview {
+  background: var(--ti-surface);
+  border: 1px solid var(--ti-border);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px;
+}
+
+.ti-preview-heading > span {
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.ti-preview-table {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 680px;
+}
+
+.ti-preview-row {
+  display: grid;
+  gap: 7px;
+  grid-template-columns: minmax(195px, 1.1fr) minmax(195px, 1.1fr) 120px minmax(120px, 1fr) auto;
+}
+
+.ti-preview-row input,
+.ti-preview-row select {
+  min-width: 0;
+}
+
+.ti-remove {
+  color: var(--ti-danger);
+  white-space: nowrap;
+}
+
+.ti-preview-actions {
+  justify-content: flex-end;
+}
+
+.ti-footnote {
+  border-top: 1px solid var(--ti-border);
+  padding-top: 9px;
+}
+
+@media (max-width: 680px) {
+  .ti-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .ti-source-state { text-align: left; }
+  .ti-grid-2 { grid-template-columns: 1fr; }
+  .ti-preview { overflow-x: auto; }
+  .ti-preview-actions { align-items: stretch; flex-direction: column-reverse; }
+  .ti-preview-actions .ti-button { width: 100%; }
+}
