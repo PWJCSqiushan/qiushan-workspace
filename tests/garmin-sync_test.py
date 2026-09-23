@@ -2,6 +2,8 @@ import datetime as dt
 import importlib.util
 from pathlib import Path
 import unittest
+from unittest.mock import patch,MagicMock
+import urllib.error
 spec=importlib.util.spec_from_file_location("sync_helper",Path(__file__).parents[1]/"scripts"/"garmin"/"sync.py")
 m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 class SleepTests(unittest.TestCase):
@@ -27,4 +29,17 @@ class SleepTests(unittest.TestCase):
     def test_nested_heart_rate_never_becomes_sleep(self):
         data=self.payload();data["sleepHeartRate"]=[{"start":1,"end":999999,"activityLevel":0}]
         a,_=m.extract_sleep(data,"2026-09-20");b,_=m.extract_sleep(self.payload(),"2026-09-20");self.assertEqual(a,b)
+class TransportTests(unittest.TestCase):
+    def test_api_identifies_the_real_client(self):
+        response=MagicMock();response.__enter__.return_value.read.return_value=b'{"status":"idle"}'
+        opener=MagicMock();opener.open.return_value=response
+        with patch.object(m.urllib.request,"build_opener",return_value=opener):
+            self.assertEqual(m.api({"baseUrl":"https://example.test","websiteToken":"test-only"},"pull")["status"],"idle")
+        request=opener.open.call_args.args[0]
+        self.assertEqual(request.get_header("User-agent"),"QiushanWorkspace-GarminSync/1.0")
+    def test_gateway_denial_is_not_reported_as_revoked_token(self):
+        opener=MagicMock();opener.open.side_effect=urllib.error.HTTPError("https://example.test",403,"Forbidden",{},None)
+        with patch.object(m.urllib.request,"build_opener",return_value=opener):
+            with self.assertRaisesRegex(RuntimeError,"website_http_403"):
+                m.api({"baseUrl":"https://example.test","websiteToken":"test-only"},"pull")
 if __name__=="__main__":unittest.main()

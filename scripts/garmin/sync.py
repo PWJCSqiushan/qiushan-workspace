@@ -132,7 +132,7 @@ def api(config, action, extra=None):
         raise RuntimeError("invalid_target")
     body = {"space": config.get("space", "personal"), "connectionId": config.get("connectionId"), "token": config.get("websiteToken"), **(extra or {})}
     request = urllib.request.Request(base + "/api/time/garmin/" + action,
-        data=json.dumps(body).encode(), headers={"Content-Type": "application/json"}, method="POST")
+        data=json.dumps(body).encode(), headers={"Content-Type": "application/json", "User-Agent": "QiushanWorkspace-GarminSync/1.0"}, method="POST")
     # Never forward private token or sleep records across redirects.
     class NoRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, *args):
@@ -142,7 +142,7 @@ def api(config, action, extra=None):
             return json.loads(response.read(200000))
     except urllib.error.HTTPError as exc:
         raise RuntimeError("website_conflict" if exc.code == 409 else
-            "website_token_revoked" if exc.code in (401, 403) else f"website_http_{exc.code}") from None
+            "website_token_revoked" if exc.code == 401 else f"website_http_{exc.code}") from None
     except (urllib.error.URLError, TimeoutError):
         raise RuntimeError("website_offline") from None
 
