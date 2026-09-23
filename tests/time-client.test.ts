@@ -21,3 +21,22 @@ test('unchanged sync keeps snapshot identity while a new version updates it',asy
  globalThis.fetch=async(url)=>String(url).includes('/api/session')?Response.json({owner:'identity-test',expiresAt:Date.now()+60000}):Response.json({owner:'identity-test',version,categories:[],intervals:[],plans:[],timer:null,imports:[],corrections:[]});
  try{const c=new TimeClient('demo',()=>{});await c.start();const first=c.data;await c.sync();assert.equal(c.data,first);version++;await c.sync();assert.notEqual(c.data,first);assert.equal(c.data?.version,1);}finally{globalThis.fetch=original;}
 });
+
+test('concurrent attendance edits drain with distinct versions and receipt snapshots',async()=>{
+ const original=globalThis.fetch;let version=0;const seen:number[]=[];
+ const snapshot=()=>({owner:'concurrent-attendance',version,categories:[],intervals:[],plans:[],timer:null,imports:[],corrections:[]});
+ globalThis.fetch=async(url,init)=>{if(String(url).includes('session'))return Response.json({owner:snapshot().owner,expiresAt:Date.now()+60000});if(String(url).includes('mutations')){const body=JSON.parse(String(init?.body));seen.push(body.baseVersion);if(body.baseVersion!==version)return Response.json({error:'conflict'},{status:409});await new Promise(r=>setTimeout(r,10));version++;return Response.json({version,snapshot:snapshot()});}return Response.json(snapshot());};
+ try{const c=new TimeClient('personal',()=>{});await c.start();await Promise.all(Array.from({length:6},(_,i)=>c.enqueue({type:'setAttendance',planId:String(i),attendance:'on_time'})));assert.deepEqual(seen,[0,1,2,3,4,5]);assert.equal(c.pending.length,0);assert.equal(c.data?.version,6);}finally{globalThis.fetch=original;}
+});
+
+test('HTML gateway failures keep the same operation retryable without logging out',async()=>{
+ const original=globalThis.fetch;let fail=true;const ids:string[]=[];
+ globalThis.fetch=async(url,init)=>{if(String(url).includes('session'))return Response.json({owner:'gateway-test',expiresAt:Date.now()+60000});if(String(url).includes('mutations')){ids.push(JSON.parse(String(init?.body)).operationId);return fail?new Response('Bad gateway',{status:502}):Response.json({version:1});}return Response.json({owner:'gateway-test',version:0,categories:[],intervals:[],plans:[],timer:null,imports:[],corrections:[]});};
+ try{const c=new TimeClient('personal',()=>{});await c.start();await c.enqueue({type:'setAttendance'});assert.equal(c.blocked,false);assert.equal(c.pending[0].state,'queued');fail=false;await c.sync();assert.equal(c.pending.length,0);assert.equal(ids[0],ids[1]);}finally{globalThis.fetch=original;}
+});
+
+test('discarding a conflict immediately resumes the next queued item without silently rebasing it',async()=>{
+ const original=globalThis.fetch;let version=0,offline=false;const seen:number[]=[];
+ globalThis.fetch=async(url,init)=>{if(offline)throw new TypeError('offline');if(String(url).includes('session'))return Response.json({owner:'discard-test',expiresAt:Date.now()+60000});if(String(url).includes('mutations')){const body=JSON.parse(String(init?.body));seen.push(body.baseVersion);return Response.json({error:'conflict'},{status:409});}return Response.json({owner:'discard-test',version,categories:[],intervals:[],plans:[],timer:null,imports:[],corrections:[]});};
+ try{const c=new TimeClient('personal',()=>{});await c.start();offline=true;await c.enqueue({type:'setAttendance',planId:'a'});await c.enqueue({type:'setAttendance',planId:'b'});offline=false;version=5;await c.sync();await c.resolve(c.pending[0].operationId,false);assert.deepEqual(seen,[0,1]);assert.equal(c.pending.length,1);assert.equal(c.pending[0].state,'conflict');assert.equal(c.pending[0].baseVersion,1);}finally{globalThis.fetch=original;}
+});
