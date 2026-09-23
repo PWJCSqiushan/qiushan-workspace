@@ -38,12 +38,12 @@ export class TimeClient{
    try{
     const result=await timeRequest<{version:number;snapshot?:TimeSnapshot}>('/api/time/mutations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({space:this.space,operationId:item.operationId,baseVersion:item.baseVersion,mutation:item.mutation})});
     await this.edit(async()=>{if(result.snapshot)await this.accept(result.snapshot);this.acknowledgedVersion=Math.max(this.acknowledgedVersion,result.version);await localRemove('time/outbox/'+this.scope()+'/'+item.operationId);await this.loadPending();});
-   }catch(e){if(e instanceof TimeRequestError&&e.status!==401&&e.status<500&&![408,429].includes(e.status)){item.state=e.status===409?'conflict':'failed';item.error=e.message;await localPut('time/outbox/'+this.scope()+'/'+item.operationId,item);}throw e;}
+   }catch(e){if(e instanceof TimeRequestError&&e.status!==401&&e.status<500&&![408,429].includes(e.status)){item.state=e.status===409?'conflict':'failed';item.error=e.message;await localPut('time/outbox/'+this.scope()+'/'+item.operationId,item);}else{item.error=e instanceof TimeRequestError?`服务端请求失败（HTTP ${e.status}）：${e.message}`:e instanceof Error&&['TimeoutError','AbortError'].includes(e.name)?'请求超时，稍后重试':e instanceof TypeError?'连接请求失败，稍后重试':'本机处理失败，请保留此页面并重试';await localPut('time/outbox/'+this.scope()+'/'+item.operationId,item);}throw e;}
   }
   await this.refresh();this.message=this.pending.length?'有修改需要核对，后续提交已保留':'已同步 · 时间版本 '+this.data?.version;return true;
  }catch(e){
   if(e instanceof TimeRequestError){this.message=e.message;if(e.status===401){this.blocked=true;this.data=null;}else if(e.status===409){try{await this.refresh();}catch(refreshError){if(refreshError instanceof TimeRequestError&&refreshError.status===401){this.blocked=true;this.data=null;this.message=refreshError.message;}}}}
-  else this.message='离线或网络不可用 · 本机草稿已保留';return false;
+  else this.message=e instanceof Error&&['TimeoutError','AbortError'].includes(e.name)?'请求超时 · 修改已保留，将重试':e instanceof TypeError?'连接请求失败 · 修改已保留，将重试':'本机处理失败 · 请保留此页面并重试';return false;
  }finally{await this.edit(()=>this.loadPending());this.emit();}}
  async resolve(id:string,retry:boolean){if(this.busy)await this.busy;
   await this.edit(async()=>{await this.loadPending();const item=this.pending.find(p=>p.operationId===id);if(!item||!this.data||this.blocked||item.state==='queued')return;

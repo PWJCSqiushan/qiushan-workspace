@@ -1,3 +1,5 @@
+import {gzipSync,gunzipSync} from 'node:zlib';
+import {Buffer} from 'node:buffer';
 import {AppError} from './workspace.ts';
 import {sha256,stable} from './protocol.ts';
 import {
@@ -73,7 +75,9 @@ export class TimeStore {
     if(!row)return null;
     if(String(row.request_hash)!==hash)throw new AppError('操作 ID 已用于不同内容',409);
     if(!row.result_json||row.result_json==='{}'||Number(row.result_version)===0)return null;
-    return jsonParse<Record<string,unknown>>(String(row.result_json),{});
+    const stored=String(row.result_json);
+    const text=stored.startsWith('gzip:')?gunzipSync(Buffer.from(stored.slice(5),'base64')).toString('utf8'):stored;
+    return JSON.parse(text) as Record<string,unknown>;
   }
 
   private parseEnvelope(input:unknown):TimeMutationEnvelope {
@@ -89,7 +93,7 @@ export class TimeStore {
   }
 
   private async writeSnapshot(space:TimeSpace,operationId:string,hash:string,baseVersion:number,next:TimeSnapshot,options:{importRecord?:TimeImportRecord;correction?:TimeCorrection;replaceHistory?:boolean}={}):Promise<boolean>{
-    validateTimeHistory(next);if(new TextEncoder().encode(JSON.stringify(next)).byteLength>3500000)throw new AppError('完整时间历史超过单次备份容量，本次未写入；请先导出整理',413);const stamp=nowIso();const h=guard(this.owner,space,next.version,operationId);const hArgs=[this.owner,space,next.version,operationId];
+    validateTimeHistory(next);const stamp=nowIso();const h=guard(this.owner,space,next.version,operationId);const hArgs=[this.owner,space,next.version,operationId];
     const values=(params:unknown[])=>[...params,...hArgs];
     const statements:any[]=[
       this.q('INSERT INTO time_receipts(owner_id,space,operation_id,request_hash,result_json,result_version,created_at) VALUES(?,?,?,?,'+"'{}'"+',0,?)',this.owner,space,operationId,hash,stamp),
@@ -114,7 +118,12 @@ export class TimeStore {
     }
     if(!options.replaceHistory)for(const item of next.corrections.filter(x=>x.undone))statements.push(this.q(`UPDATE time_corrections SET undone=1 WHERE owner_id=? AND space=? AND correction_id=? AND ${h}`,...values([this.owner,space,item.id])));
     const result={operationId,version:next.version,snapshot:next};
-    statements.push(this.q(`UPDATE time_receipts SET result_json=?,result_version=? WHERE owner_id=? AND space=? AND operation_id=? AND ${h}`,JSON.stringify(result),next.version,this.owner,space,operationId,...hArgs));
+    // D1 limits an entire row to 2 MB. Keep exact idempotent receipts without
+    // duplicating uncompressed correction history into one oversized row.
+    const receiptJson=JSON.stringify(result);
+    const storedReceipt=Buffer.byteLength(receiptJson)>262144?'gzip:'+gzipSync(receiptJson).toString('base64'):receiptJson;
+    if(Buffer.byteLength(storedReceipt)>1800000)throw new AppError('本次同步回执超过存储容量，修改仍保留在本机，请导出备份并联系维护者',413);
+    statements.push(this.q(`UPDATE time_receipts SET result_json=?,result_version=? WHERE owner_id=? AND space=? AND operation_id=? AND ${h}`,storedReceipt,next.version,this.owner,space,operationId,...hArgs));
     try{await this.db.batch(statements);}catch(error){const prior=await this.receipt(space,operationId,hash);if(prior)return false;throw error;}
     const head=await this.q('SELECT version,last_operation_id FROM time_heads WHERE owner_id=? AND space=?',this.owner,space).first<Row>();
     const receipt=await this.receipt(space,operationId,hash);
