@@ -8,27 +8,30 @@ import {sha256} from './protocol.ts';
 function spaceOf(value:unknown):TimeSpace{if(value!=='personal'&&value!=='demo')throw new AppError('工作区无效');return value;}
 function operationId(value:unknown){if(typeof value!=='string'||!/^[A-Za-z0-9_-]{1,120}$/.test(value))throw new AppError('操作 ID 无效');return value;}
 
-export function timeFailure(error:unknown){
-  if(error instanceof TimeConflictError)return json({error:error.message,code:error.code,latest:error.latest,version:error.latest.version},409);
-  if(error instanceof AppError)return json({error:error.message,code:error.status===410?'SYNC_RESET_REQUIRED':undefined,...(error instanceof Error&&'details' in error?{details:(error as Error & {details?:unknown}).details}: {})},error.status);
+export function timeFailure(error:unknown,includeSnapshot=true){
+  if(error instanceof TimeConflictError)return json({error:error.message,code:error.code,...(includeSnapshot?{latest:error.latest}:{}),version:error.latest.version},409);
+  if(error instanceof AppError)return json({error:error.message,code:error.status===410?'SYNC_RESET_REQUIRED':undefined,...(includeSnapshot&&error instanceof Error&&'details' in error?{details:(error as Error & {details?:unknown}).details}: {})},error.status);
   console.error(JSON.stringify({code:'TIME_REQUEST_FAILED',name:error instanceof Error?error.name:'unknown'}));
   return json({error:'时间看板服务暂时不可用，操作已保留，请重试'},500);
 }
 
 /** Worker/route entry point. Garmin commit/pull may authenticate with its
  * scoped token when the normal session cookie is unavailable. */
-export async function timeRoute(request:Request){try{return await timeRouteInternal(request);}catch(error){return timeFailure(error);}}
+export async function timeRoute(request:Request){try{return await timeRouteInternal(request);}catch(error){return timeFailure(error,!new URL(request.url).pathname.startsWith('/api/time/garmin'));}}
 async function timeRouteInternal(request:Request){
   const {identity}=await import('./auth.ts');const {env}=await import('cloudflare:workers');const path=new URL(request.url).pathname;let user;
   try{user=await identity(request);}catch(error){
     if(!path.startsWith('/api/time/garmin')||!['pull','commit'].some(action=>path.endsWith('/'+action)))throw error;
     let payload:Record<string,unknown>={};try{payload=await body(request.clone() as unknown as Request) as Record<string,unknown>;}catch{throw error;}
+    assertGarminTokenRoute(request,payload);
     const token=payload.token;if(typeof token!=='string'||!token)throw error;
     const row=await env.DB.prepare("SELECT owner_id,space FROM time_garmin_connections WHERE token_hash=? AND status='active'").bind(await sha256(token)).first<{owner_id:string;space:TimeSpace}>();
     if(!row||payload.space!==row.space)throw error;user={owner:row.owner_id};
   }
   return handleTimeRequest(request,new TimeStore(env.DB,user.owner));
 }
+
+export function assertGarminTokenRoute(request:Request,payload:Record<string,unknown>){const action=new URL(request.url).pathname.split('/').at(-1);if(request.method!=='POST'||!['pull','commit'].includes(action||'')||(payload.action!==undefined&&payload.action!==action))throw new AppError('Garmin 令牌不允许此操作',403);}
 
 function routeParts(request:Request){return new URL(request.url).pathname.split('/').filter(Boolean).slice(2);}
 

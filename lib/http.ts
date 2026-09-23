@@ -1,5 +1,5 @@
-import {AppError} from './workspace';
-import {ConflictError,type Space} from './protocol';
+import {AppError} from './workspace.ts';
+import {ConflictError,type Space} from './protocol.ts';
 export function spaceOf(v:unknown):Space{if(v!=='personal'&&v!=='demo')throw new AppError('工作区无效');return v;}
 export function json(data:unknown,status=200){return Response.json(data,{status,headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});}
 export function failure(e:unknown){if(e instanceof ConflictError)return json({error:e.message,code:e.code,latest:e.latest,...(e.latestSettings!==undefined?{latestSettings:e.latestSettings}:{}),...(e.settingsVersion!==undefined?{settingsVersion:e.settingsVersion}: {})},409);if(e instanceof AppError)return json({error:e.message,code:e.status===410?'SYNC_RESET_REQUIRED':undefined},e.status);console.error(JSON.stringify({code:'REQUEST_FAILED',name:e instanceof Error?e.name:'unknown'}));return json({error:'服务暂时不可用，操作已保留，请重试'},500);}
