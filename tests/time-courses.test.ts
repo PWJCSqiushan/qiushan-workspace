@@ -28,8 +28,8 @@ test('future course permits exception presets but contributes no attendance or a
  let s=state([plan('future',{start:'2026-09-25T00:00:00.000Z',end:'2026-09-25T00:45:00.000Z'})]);s=apply(s,{type:'rolloverCourses'});assert.equal(s.plans[0].attendance,undefined);assert.equal(s.intervals.length,0);
  s=apply(s,{type:'setCourseState',id:'future',status:'excused',deliveryMode:'online',cancelled:true});assert.equal(s.intervals.length,0);assert.throws(()=>apply(s,{type:'setCourseState',id:'future',lateMinutes:2}),/结束/);s=apply(s,{type:'setCourseState',id:'future',cancelled:false});assert.equal(s.plans[0].status,'planned');
 });
-test('legacy missing provenance and contradictory half-periods remain untouched until explicit review; migration undo is exact',()=>{
- const plans=pair().map((p,i)=>({...p,courseName:undefined,importSource:undefined,sourcePeriods:undefined,sourceKey:'timetable:old'+i,note:'同一课程',attendance:i?'absent' as const:'on_time' as const,status:i?'cancelled' as const:'planned' as const}));const old=state(plans);const preview=previewCourseMigration(old);assert.equal(preview.conflicts.length,1);assert.ok(preview.conflicts[0].reasons.includes('partial_cancellation'));assert.deepEqual(apply(old,{type:'rolloverCourses'}),old);
+test('legacy merge conflicts retain identities and exceptions while ended attendance still materializes; migration undo is exact',()=>{
+ const plans=pair().map((p,i)=>({...p,courseName:undefined,importSource:undefined,sourcePeriods:undefined,sourceKey:'timetable:old'+i,note:'同一课程',attendance:i?'absent' as const:'on_time' as const,status:i?'cancelled' as const:'planned' as const}));const old=state(plans);const preview=previewCourseMigration(old);assert.equal(preview.conflicts.length,1);assert.ok(preview.conflicts[0].reasons.includes('partial_cancellation'));const rolled=apply(old,{type:'rolloverCourses'});assert.deepEqual(rolled.plans,old.plans);assert.equal(rolled.intervals.length,1);assert.equal(rolled.intervals[0].start,plans[0].start);assert.equal(rolled.intervals[0].end,plans[0].end);assert.deepEqual(apply(rolled,{type:'rolloverCourses'}),rolled);
  const groupKey=preview.groups[0].groupKey;assert.throws(()=>apply(old,{type:'migrateCourses',decisions:[{groupKey,action:'merge'}]}),/核对/);const migrated=apply(old,{type:'migrateCourses',decisions:[{groupKey,action:'merge',status:'on_time',cancelled:false}]});assert.equal(migrated.plans.length,1);assert.equal(migrated.intervals.length,1);const restored=apply(migrated,{type:'undo',correctionId:migrated.corrections.at(-1)!.id});assert.deepEqual(restored.plans,old.plans);assert.deepEqual(restored.intervals,old.intervals);
  const kept=apply(old,{type:'migrateCourses',decisions:[{groupKey,action:'keep'}]});assert.equal(kept.plans.length,2);assert.equal(previewCourseMigration(kept).conflicts.length,0);
 });
@@ -94,4 +94,17 @@ test('legacy queued first and second half IDs reject merged attendance operation
 test('reviewed single kept course remains compatible with legacy queue mutations',()=>{
  const old=state(pair());const groupKey=previewCourseMigration(old).groups[0].groupKey;const s=apply(old,{type:'migrateCourses',decisions:[{groupKey,action:'keep'}]});
  assert.equal(apply(s,{type:'setAttendance',id:'p1',status:'absent'}).plans[0].attendance,'absent');assert.equal(apply(s,{type:'cancelPlan',id:'p2'}).plans[1].status,'cancelled');
+});
+
+
+test('unreviewed legacy timetable defaults ended periods, preserves future and explicit exceptions, and fills only manual gaps',()=>{
+ const legacy=(id:string,patch:Partial<TimePlan>={})=>plan(id,{courseName:undefined,importSource:undefined,sourcePeriods:undefined,sourceKey:'timetable:'+id,note:'旧课表',...patch});
+ const s=state([legacy('ended'),legacy('future',{start:'2026-09-25T00:00:00.000Z',end:'2026-09-25T00:45:00.000Z'}),legacy('absent',{attendance:'absent'}),legacy('excused',{attendance:'excused'}),legacy('cancelled',{status:'cancelled'}),legacy('online',{deliveryMode:'online'}),legacy('late',{attendance:'late_over_5'})]);
+ s.intervals=[{id:'manual',start:'2026-09-21T00:10:00.000Z',end:'2026-09-21T00:20:00.000Z',categoryId:'study',manual:true}];
+ const next=apply(s,{type:'rolloverCourses'});assert.equal(next.plans.length,7);assert.equal(next.plans.find(p=>p.id==='ended')!.attendance,'on_time');assert.equal(next.plans.find(p=>p.id==='future')!.attendance,undefined);assert.deepEqual(next.intervals.find(r=>r.id==='manual'),s.intervals[0]);assert.equal(next.intervals.filter(r=>r.generatedBy==='course').reduce((n,r)=>n+(Date.parse(r.end)-Date.parse(r.start))/60000,0),35);assert.deepEqual(apply(next,{type:'rolloverCourses'}),next);assert.ok(previewCourseMigration(next).conflicts.length>0);
+});
+
+
+test('unreviewed conflicting legacy actual is preserved by automatic rollover until explicit course edit',()=>{
+ const p=plan('legacy',{courseName:undefined,importSource:undefined,sourcePeriods:undefined,sourceKey:'timetable:conflict',attendance:'absent'}),s=state([p]);s.intervals=[{id:'actual-legacy',start:p.start,end:p.end,categoryId:'class',manual:true,sourceKey:p.sourceKey}];const next=apply(s,{type:'rolloverCourses'});assert.deepEqual(next,s);const explicit=apply(s,{type:'setCourseState',id:p.id,status:'absent'});assert.equal(explicit.intervals.length,0);
 });

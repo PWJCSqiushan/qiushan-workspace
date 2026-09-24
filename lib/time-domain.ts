@@ -400,9 +400,9 @@ function removeCourseRows(core:TimeCoreSnapshot,plan:TimePlan,allLinked=false){
   for(const source of core.sources){if(source.kind==='actual'&&removed.some(row=>row.id===source.recordId)){source.kind='plan';source.recordId=plan.id;source.status=plan.status==='cancelled'?'cancelled':'active';}}
 }
 /** Regenerate only system pieces; user intervals always win every overlapping minute. */
-function reconcileCourse(core:TimeCoreSnapshot,plan:TimePlan,now:Date){
+function reconcileCourse(core:TimeCoreSnapshot,plan:TimePlan,now:Date,preserveLegacyActual=false){
   const excluded=plan.status==='cancelled'||plan.deliveryMode==='online'||plan.attendance==='absent'||plan.attendance==='excused';
-  if(excluded){removeCourseRows(core,plan,true);return core;}
+  if(excluded){removeCourseRows(core,plan,!preserveLegacyActual);return core;}
   if(timestampMs(plan.end)>now.getTime())return core;
   plan.attendance??='on_time';
   // Old lateness has no reliable arrival minute: preserve its actual exactly.
@@ -436,9 +436,11 @@ export function migrateCourses(input:TimeCoreSnapshot,decisions:CourseDecision[]
   core.plans.sort((a,b)=>timestampMs(a.start)-timestampMs(b.start)||a.id.localeCompare(b.id));return core;
 }
 export function rolloverCourses(input:TimeCoreSnapshot,now=new Date()):TimeCoreSnapshot{
-  const core=clone(input);const preview=previewCourseMigration({...core,version:0});const blocked=new Set(preview.conflicts.flatMap(g=>g.planIds));
+  const core=clone(input);const preview=previewCourseMigration({...core,version:0});const unresolved=new Set(preview.conflicts.flatMap(g=>g.planIds));
   for(const group of preview.groups.filter(g=>!g.requiresReview))applyCourseGroup(core,group,undefined,now);
-  for(const plan of core.plans)if(plan.categoryId==='class'&&!blocked.has(plan.id))reconcileCourse(core,plan,now);
+  // Merge review protects lesson identity, not default attendance. Reconcile each
+  // remaining legacy period independently, retaining its explicit exceptions.
+  for(const plan of core.plans)if(plan.categoryId==='class')reconcileCourse(core,plan,now,unresolved.has(plan.id));
   core.plans.sort((a,b)=>timestampMs(a.start)-timestampMs(b.start)||a.id.localeCompare(b.id));return core;
 }
 
