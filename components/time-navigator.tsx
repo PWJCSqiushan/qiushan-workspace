@@ -5,9 +5,9 @@ import {clampTimeWindow,centerTimeWindow,dayNumber,dayString,moveTimeWindow,resi
 import type {TimeDomain,TimeWindow} from '../lib/time-window';
 import './time-navigator.css';
 
-type Props={value:TimeWindow;domain:TimeDomain;onChange:(next:TimeWindow)=>void};
+type Props={value:TimeWindow;domain:TimeDomain;onChange:(next:TimeWindow)=>void;onReset?:()=>void};
 type Edge='start'|'end'|'pan';
-export function TimeNavigator({value,domain,onChange}:Props) {
+export function TimeNavigator({value,domain,onChange,onReset}:Props) {
  const current=clampTimeWindow(value,domain),bounds=timeDomainBounds(domain),total=bounds.end-bounds.start+1;
  const start=dayNumber(current.start),end=start+current.days-1,id=useId();
  const rail=useRef<HTMLDivElement>(null),frame=useRef<number|null>(null),pending=useRef<TimeWindow|null>(null);
@@ -39,7 +39,7 @@ export function TimeNavigator({value,domain,onChange}:Props) {
  }
  const handlers=(edge:Edge)=>({onPointerDown:(e:PointerEvent<HTMLButtonElement>)=>begin(e,edge),onPointerMove:move,onPointerUp:finish,onPointerCancel:finish,onLostPointerCapture:finish,onKeyDown:(e:KeyboardEvent<HTMLButtonElement>)=>key(e,edge)});
  return <section className="time-navigator" aria-label="日期范围导航">
-  <div className="time-navigator-caption"><span>{current.start} — {dayString(end)}</span><span>{current.days} 天</span></div>
+  <div className="time-navigator-caption"><span>{current.start} — {dayString(end)}</span><span>{current.days} 天{onReset&&<button type="button" className="time-navigator-reset" onClick={()=>{pending.current=null;if(frame.current!==null)cancelAnimationFrame(frame.current);frame.current=null;onReset();}} title="恢复今天及前24天、后5天">恢复默认 · 30天</button>}</span></div>
   <div className={'time-navigator-rail'+(railWidth*current.days/total<88?' compact':'')} ref={rail}>
    <button type="button" className="time-navigator-overview" aria-label="完整历史：点击定位日期" tabIndex={-1} onClick={e=>{const rect=rail.current!.getBoundingClientRect();queue(centerTimeWindow(dayString(bounds.start+Math.min(total-1,Math.max(0,(e.clientX-rect.left)/rect.width*total))),active().days,domain));}}/>
    <div className="time-navigator-selection" style={{left:`${(start-bounds.start)/total*100}%`,width:`${current.days/total*100}%`}} aria-hidden="true"/>

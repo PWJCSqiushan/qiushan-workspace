@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import {bucketTimeRanges,centerTimeWindow,clampTimeWindow,dayNumber,dayString,defaultTimeWindow,moveTimeWindow,resizeTimeWindow,timeDateTickIndices,zoomTimeWindow} from '../lib/time-window.ts';
 import {summarizeTimeSlot,TIME_SLOT_MS} from '../lib/time-grid.ts';
 const domain={start:'2024-01-01',end:'2027-12-31'};
-void test('default is 54 past days, today, and five future days across leap boundary',()=>{
- const v=defaultTimeWindow('2024-03-01');assert.deepEqual(v,{start:'2024-01-07',days:60});assert.equal(dayString(dayNumber(v.start)+v.days-1),'2024-03-06');
+void test('default is 24 past days, today, and five future days across leap boundary',()=>{
+ const v=defaultTimeWindow('2024-03-01');assert.deepEqual(v,{start:'2024-02-06',days:30});assert.equal(dayString(dayNumber(v.start)+v.days-1),'2024-03-06');
  assert.throws(()=>dayNumber('2023-02-29'),RangeError);
 });
 void test('window sizes and inclusive domain bounds clamp correctly',()=>{
@@ -15,12 +15,12 @@ void test('window sizes and inclusive domain bounds clamp correctly',()=>{
 });
 void test('pan and center preserve size near both edges',()=>{
  const v=defaultTimeWindow('2026-09-24');assert.equal(moveTimeWindow(v,-10000,domain).start,domain.start);
- assert.equal(dayString(dayNumber(moveTimeWindow(v,10000,domain).start)+59),domain.end);
+ assert.equal(dayString(dayNumber(moveTimeWindow(v,10000,domain).start)+v.days-1),domain.end);
  assert.equal(centerTimeWindow(domain.start,60,domain).start,domain.start);
  assert.equal(dayNumber(centerTimeWindow('2026-09-24',7,domain).start),dayNumber('2026-09-24')-3);
 });
 void test('resize fixes the opposite endpoint and never crosses or exceeds 120',()=>{
- const v=defaultTimeWindow('2026-09-24'),end=dayNumber(v.start)+59;
+ const v=defaultTimeWindow('2026-09-24'),end=dayNumber(v.start)+v.days-1;
  for(const delta of [-10000,-60,-1,0,1,60,10000]){
   const left=resizeTimeWindow(v,'start',delta,domain),right=resizeTimeWindow(v,'end',delta,domain);
   assert.equal(dayNumber(left.start)+left.days-1,end);assert.equal(right.start,v.start);

@@ -13,9 +13,9 @@ export function timeDomainBounds(domain:TimeDomain) {
  if(end<start)throw new RangeError('Time domain ends before it starts');
  return {start,end:Math.max(end,start+6)};
 }
-export function defaultTimeWindow(today:string):TimeWindow {return {start:dayString(dayNumber(today)-54),days:60};}
+export function defaultTimeWindow(today:string):TimeWindow {return {start:dayString(dayNumber(today)-24),days:30};}
 export function clampTimeWindow(value:TimeWindow,domain:TimeDomain):TimeWindow {
- const {start,end}=timeDomainBounds(domain),days=Math.min(end-start+1,120,Math.max(7,Number.isFinite(value.days)?Math.round(value.days):60));
+ const {start,end}=timeDomainBounds(domain),days=Math.min(end-start+1,120,Math.max(7,Number.isFinite(value.days)?Math.round(value.days):30));
  return {start:dayString(Math.max(start,Math.min(end-days+1,dayNumber(value.start)))),days};
 }
 export function moveTimeWindow(value:TimeWindow,days:number,domain:TimeDomain):TimeWindow {

@@ -17,3 +17,5 @@
 .time-navigator-rail button:focus-visible{outline:2px solid var(--time-plan,#748caa);outline-offset:-2px;z-index:3}
 .time-navigator-domain{font-size:9px}
 .time-navigator-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+
+.time-app .time-navigator-reset{margin-left:12px;padding:2px 8px;font-size:10px;line-height:1.4}.time-navigator-caption{align-items:center}.time-navigator-caption>span:last-child{display:flex;align-items:center;white-space:nowrap}
