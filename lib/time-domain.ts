@@ -75,8 +75,14 @@ export type TimeCorrection = {
   before:TimeCoreSnapshot;
   after:TimeCoreSnapshot;
   undone:boolean;
+  redoInvalidated?:boolean;
   createdAt:string;
 };
+
+/** Automatic course rollover is bookkeeping, not a user-edit history item. */
+export function isAutomaticTimeCorrection(item:Pick<TimeCorrection,'kind'>):boolean {
+  return item.kind==='rolloverCourses';
+}
 
 export type TimeSnapshot = TimeCoreSnapshot & {
   owner:string;
@@ -106,6 +112,7 @@ export type TimeMutation =
   | {type:'category';category:TimeCategory}
   | {type:'upsertPlan';plan:Partial<TimePlan>&Pick<TimePlan,'start'|'end'|'categoryId'>;restoreCancelled?:boolean}
   | {type:'undo';correctionId:string}
+  | {type:'redo';correctionId:string}
   | {type:'import';items:ImportCandidate[];source:string;replace?:boolean;importId?:string}
   | {type:'confirmPlan';ids:string[];replace?:boolean}
   | {type:'setAttendance';id:string;status:TimeAttendanceStatus}
@@ -262,7 +269,7 @@ export function validateTimeCoreSnapshot(core:TimeCoreSnapshot,options:{now?:Dat
 export function validateTimeHistory(snapshot:Pick<TimeSnapshot,'imports'|'corrections'>){
   ensure(Array.isArray(snapshot.imports)&&snapshot.imports.length<=10000,'导入历史无效或过多');ensure(Array.isArray(snapshot.corrections)&&snapshot.corrections.length<=10000,'修正历史无效或过多');
   const ids=new Set<string>();for(const item of snapshot.imports){ensure(!!item&&typeof item==='object'&&typeof item.id==='string'&&ID_RE.test(item.id)&&!ids.has(item.id),'导入历史标识无效或重复');ids.add(item.id);ensure(typeof item.source==='string'&&item.source.length>0&&item.source.length<=200&&['preview','committed','partial','failed'].includes(item.status),'导入历史内容无效');ensure(Number.isSafeInteger(item.itemCount)&&item.itemCount>=0,'导入数量无效');for(const count of [item.accepted,item.skipped])if(count!==undefined)ensure(Number.isSafeInteger(count)&&count>=0&&count<=item.itemCount,'导入结果数量无效');canonicalTimestamp(item.createdAt);}
-  ids.clear();for(const item of snapshot.corrections){ensure(!!item&&typeof item==='object'&&typeof item.id==='string'&&ID_RE.test(item.id)&&!ids.has(item.id),'修正标识无效或重复');ids.add(item.id);ensure(typeof item.operationId==='string'&&ID_RE.test(item.operationId)&&typeof item.kind==='string'&&item.kind.length<=80&&typeof item.undone==='boolean','修正历史内容无效');canonicalTimestamp(item.createdAt);validateTimeCoreSnapshot(item.before,{allowFutureActual:true});validateTimeCoreSnapshot(item.after,{allowFutureActual:true});}
+  ids.clear();for(const item of snapshot.corrections){ensure(!!item&&typeof item==='object'&&typeof item.id==='string'&&ID_RE.test(item.id)&&!ids.has(item.id),'修正标识无效或重复');ids.add(item.id);ensure(typeof item.operationId==='string'&&ID_RE.test(item.operationId)&&typeof item.kind==='string'&&item.kind.length<=80&&typeof item.undone==='boolean','修正历史内容无效');ensure(item.redoInvalidated===undefined||typeof item.redoInvalidated==='boolean','恢复历史标记无效');canonicalTimestamp(item.createdAt);validateTimeCoreSnapshot(item.before,{allowFutureActual:true});validateTimeCoreSnapshot(item.after,{allowFutureActual:true});}
 }
 
 export function durationMinutes(start:string,end:string):number {
@@ -277,6 +284,76 @@ export function overlaps(a:Pick<TimeInterval,'start'|'end'>,b:Pick<TimeInterval,
 function clone<T>(value:T):T{return structuredClone(value);}
 function stable(value:unknown):string{if(value===null||typeof value!=='object')return JSON.stringify(value);if(Array.isArray(value))return '['+value.map(stable).join(',')+']';return '{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+stable((value as Record<string,unknown>)[key])).join(',')+'}';}
 function newId(prefix:string){return `${prefix}-${crypto.randomUUID()}`;}
+
+type CoreEntity=Record<string,unknown>;
+type CoreCollection='categories'|'intervals'|'plans'|'sources';
+function entityKey(collection:CoreCollection,item:CoreEntity){return String(item[collection==='sources'?'sourceKey':'id']||'');}
+function automaticEntity(collection:CoreCollection,item:CoreEntity){
+  if(collection==='intervals')return item.generatedBy==='course'&&item.manual===false;
+  if(collection==='plans')return item.categoryId==='class'&&item.manual===false;
+  if(collection==='sources')return item.manual===false;
+  return false;
+}
+function mapEntities(collection:CoreCollection,items:CoreEntity[]){return new Map(items.map(item=>[entityKey(collection,item),item]));}
+function changedEntityFields(before:CoreEntity,after:CoreEntity){
+  return [...new Set([...Object.keys(before),...Object.keys(after)])].filter(key=>stable(before[key])!==stable(after[key]));
+}
+
+/**
+ * Apply only the entities/fields that the correction actually changed.
+ * Automatic course reconciliation may add generated rows or fill untouched
+ * attendance fields between the user action and its undo. Those changes are
+ * retained; a changed field still has to match its expected CAS value.
+ */
+function applyCorrectionDelta(current:TimeCoreSnapshot,original:TimeCorrection,direction:'undo'|'redo'):TimeCoreSnapshot {
+  const before=original.before,after=original.after,result=clone(current);
+  for(const collection of ['categories','intervals','plans','sources'] as const){
+    const currentItems=result[collection] as unknown as CoreEntity[];
+    const beforeMap=mapEntities(collection,before[collection] as unknown as CoreEntity[]),afterMap=mapEntities(collection,after[collection] as unknown as CoreEntity[]),currentMap=mapEntities(collection,currentItems);
+    const allKeys=new Set([...beforeMap.keys(),...afterMap.keys()]);
+    const changedKeys=[...allKeys].filter(key=>stable(beforeMap.get(key))!==stable(afterMap.get(key)));
+    for(const key of changedKeys){
+      const b=beforeMap.get(key),a=afterMap.get(key),now=currentMap.get(key),expected=direction==='undo'?a:b,target=direction==='undo'?b:a;
+      if(!b||!a){
+        const correctionAdded=!!a&&!b;
+        const remove=direction==='undo'?correctionAdded:!correctionAdded;
+        if(remove){
+          if(!now)throw new TimeValidationError('当前数据在修正涉及的记录上已变化，无法安全恢复',409);
+          if(stable(now)!==stable(expected))throw new TimeValidationError('当前数据在修正涉及的记录上已变化，无法安全恢复',409);
+          const index=currentItems.findIndex(item=>entityKey(collection,item)===key);if(index>=0)currentItems.splice(index,1);
+        }else{
+          // The expected side is absent here. A same-key generated course row
+          // is the only safe exception: rollover may have recreated it after a
+          // user deleted one, and it can be retained without overwriting it.
+          if(now){
+            if(!automaticEntity(collection,now)||stable(now)!==stable(target))throw new TimeValidationError('当前数据在修正涉及的记录上已变化，无法安全撤销',409);
+          }else if(target)currentItems.push(clone(target));
+        }
+        continue;
+      }
+      if(!now)throw new TimeValidationError('当前数据在修正涉及的记录上已变化，无法安全恢复',409);
+      const fields=changedEntityFields(b,a);
+      const next=clone(now);
+      for(const field of fields){
+        if(stable(now[field])!==stable(expected?.[field]))throw new TimeValidationError('当前数据在修正涉及的字段上已变化，无法安全撤销',409);
+        if(target&&target[field]===undefined)delete next[field];else if(target)next[field]=clone(target[field]);
+      }
+      const index=currentItems.findIndex(item=>entityKey(collection,item)===key);if(index<0)throw new TimeValidationError('当前数据在修正涉及的记录上已变化，无法安全恢复',409);currentItems[index]=next;
+    }
+    const known=new Set(allKeys);for(const item of currentItems)if(!known.has(entityKey(collection,item))&&!automaticEntity(collection,item))throw new TimeValidationError('存在新的手动修改，无法安全恢复',409);
+  }
+  if(stable(before.timer)!==stable(after.timer)){
+    const expected=direction==='undo'?after.timer:before.timer,target=direction==='undo'?before.timer:after.timer;
+    if(stable(result.timer)!==stable(expected))throw new TimeValidationError('当前计时状态已变化，无法安全恢复',409);result.timer=clone(target);
+  }
+  // Restoring a manual interval takes precedence over generated course rows;
+  // remove only generated rows that would otherwise overlap that restored
+  // manual interval. Manual and unrelated records are never removed here.
+  const protectedRows=result.intervals.filter(item=>!(item.generatedBy==='course'&&item.manual===false));
+  result.intervals=result.intervals.flatMap(item=>{if(!(item.generatedBy==='course'&&item.manual===false))return [item];let spans=[{start:timestampMs(item.start),end:timestampMs(item.end)}];for(const row of protectedRows){const a=timestampMs(row.start),b=timestampMs(row.end);spans=spans.flatMap(span=>b<=span.start||a>=span.end?[span]:[...(a>span.start?[{start:span.start,end:a}]:[]),...(b<span.end?[{start:b,end:span.end}]:[])]);}return spans.map(span=>span.start===timestampMs(item.start)&&span.end===timestampMs(item.end)?item:{...item,id:courseKey([item.courseGroupKey||item.id,String(span.start),String(span.end)]),start:new Date(span.start).toISOString(),end:new Date(span.end).toISOString()});});
+  result.intervals.sort((a,b)=>timestampMs(a.start)-timestampMs(b.start)||a.id.localeCompare(b.id));
+  return result;
+}
 
 function coreWithoutCorrections(snapshot:TimeSnapshot):TimeCoreSnapshot {
   return {categories:clone(snapshot.categories),intervals:clone(snapshot.intervals),plans:clone(snapshot.plans),timer:clone(snapshot.timer),sources:clone(snapshot.sources)};
@@ -513,10 +590,16 @@ export function applyTimeMutation(snapshot:TimeSnapshot,mutation:TimeMutation,op
       resultCorrection=correction(before,core,operationId,'upsertPlan',stamp);break;
     }
     case 'undo': {
-      const activeCorrections=snapshot.corrections.filter(item=>!item.undone).sort((a,b)=>a.createdAt.localeCompare(b.createdAt)||a.id.localeCompare(b.id));
-      const original=snapshot.corrections.find(item=>item.id===mutation.correctionId);ensure(original,'修正记录不存在',404);ensure(!original.undone,'修正已撤销',409);ensure(activeCorrections.at(-1)?.id===original.id,'只能撤销最近一次修正',409);
-      ensure(stable(core)!==''&&stable(core)===stable(original.after),'当前数据已在修正后继续变化，不能直接撤销',409);
-      core=clone(original.before);const i=snapshot.corrections.findIndex(item=>item.id===original.id);snapshot.corrections[i]={...original,undone:true};break;
+      const activeCorrections=snapshot.corrections.filter(item=>!item.undone&&!isAutomaticTimeCorrection(item)).sort((a,b)=>a.createdAt.localeCompare(b.createdAt)||a.id.localeCompare(b.id));
+      const original=snapshot.corrections.find(item=>item.id===mutation.correctionId);ensure(original&&!isAutomaticTimeCorrection(original),'该记录由系统自动结算，不能手动撤销',409);ensure(!original.undone,'修正已撤销',409);ensure(activeCorrections.at(-1)?.id===original.id,'只能撤销最近一次手动修正',409);
+      core=applyCorrectionDelta(core,original,'undo');break;
+    }
+    case 'redo': {
+      const history=snapshot.corrections.filter(item=>!isAutomaticTimeCorrection(item)).sort((a,b)=>a.createdAt.localeCompare(b.createdAt)||a.id.localeCompare(b.id));
+      const original=snapshot.corrections.find(item=>item.id===mutation.correctionId);ensure(original&&!isAutomaticTimeCorrection(original),'该记录由系统自动结算，不能手动恢复',409);ensure(original.undone,'修正尚未撤销',409);
+      const latestActive=history.reduce((last,item,i)=>item.undone?last:i,-1);const next=history.slice(latestActive+1).find(item=>item.undone&&!item.redoInvalidated);
+      ensure(!original.redoInvalidated&&next?.id===original.id,'已有新的修改或请先恢复上一步',409);
+      core=applyCorrectionDelta(core,original,'redo');break;
     }
     case 'import': {
       ensure(Array.isArray(mutation.items)&&mutation.items.length<=5000,'导入项目过多');ensure(typeof mutation.source==='string'&&mutation.source.length>0&&mutation.source.length<=200,'导入来源无效');
@@ -569,11 +652,14 @@ export function applyTimeMutation(snapshot:TimeSnapshot,mutation:TimeMutation,op
     return {snapshot:{...snapshot,...core,version:snapshot.version+1},correction:importCorrection,accepted,skipped};
   }
   if(['rolloverCourses','migrateCourses','setCourseState'].includes(mutation.type)&&stable(before)===stable(core))return {snapshot:clone(snapshot),accepted,skipped};
-  const changed=!['timerStart','category','undo','cancelPlan','confirmPlan'].includes(mutation.type);
+  // Rollover is an automatic reconciliation pass. It still advances the
+  // snapshot when it changes course data, but never becomes a user undo step.
+  const changed=!['undo','redo','rolloverCourses'].includes(mutation.type);
   if(resultCorrection===undefined&&changed)resultCorrection=correction(before,core,operationId,mutation.type,stamp);
-  const undoneId=mutation.type==='undo'?mutation.correctionId:undefined;
+  const toggledCorrection=mutation.type==='undo'||mutation.type==='redo'?mutation.correctionId:undefined;
+  const toggledUndone=mutation.type==='undo'?true:mutation.type==='redo'?false:undefined;
   validateTimeCoreSnapshot(core,{now});
-  return {snapshot:{...snapshot,...core,version:snapshot.version+1,corrections:snapshot.corrections.map(item=>item.id===undoneId?{...item,undone:true}:item)},correction:resultCorrection,accepted,skipped};
+  return {snapshot:{...snapshot,...core,version:snapshot.version+1,corrections:snapshot.corrections.map(item=>resultCorrection&&item.undone?{...item,redoInvalidated:true}:item).map(item=>item.id===toggledCorrection?{...item,undone:toggledUndone??item.undone}:item)},correction:resultCorrection,accepted,skipped};
 }
 
 function parts(ms:number){

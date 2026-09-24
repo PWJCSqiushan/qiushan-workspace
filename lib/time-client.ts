@@ -3,14 +3,15 @@ export type TimeCategory={id:string;name:string;color:string;active:boolean};
 export type TimeInterval={id:string;start:string;end:string;categoryId:string;note:string;sourceKey?:string;manual?:boolean;estimated?:boolean;courseGroupKey?:string;generatedBy?:'course'};
 export type TimePlan=TimeInterval&{status:string;attendance?:'on_time'|'late_under_5'|'late_over_5'|'absent'|'excused';courseName?:string;location?:string;deliveryMode?:'in_person'|'online';lateMinutes?:number;originalPlanIds?:string[];sourcePeriods?:number[];importSource?:string};
 export type TimeSaveResult={state:'synced'|'queued';message:string};
-export type TimeSnapshot={owner:string;version:number;categories:TimeCategory[];intervals:TimeInterval[];plans:TimePlan[];timer:{id?:string;start:string;categoryId:string;note:string}|null;imports:{id:string;source:string;accepted?:number;skipped?:number;createdAt?:string}[];corrections:{id:string;createdAt?:string;kind?:string;undone?:boolean}[]};
+export type TimeCorrection={id:string;operationId?:string;createdAt?:string;kind?:string;undone?:boolean;redoInvalidated?:boolean;before?:unknown;after?:unknown};
+export type TimeSnapshot={owner:string;version:number;categories:TimeCategory[];intervals:TimeInterval[];plans:TimePlan[];timer:{id?:string;start:string;categoryId:string;note:string}|null;sources?:unknown[];imports:{id:string;source:string;accepted?:number;skipped?:number;createdAt?:string}[];corrections:TimeCorrection[]};
 export type TimeMutation=Record<string,unknown>&{type:string};
 export type PendingTime={operationId:string;baseVersion:number;mutation:TimeMutation;state:'queued'|'conflict'|'failed';error?:string;createdAt:string};
 type TimeSession={owner:string;expiresAt:number};
 export class TimeRequestError extends Error{constructor(message:string,public status:number,public payload:Record<string,unknown>){super(message);}}
 export async function timeRequest<T>(url:string,init?:RequestInit):Promise<T>{const response=await fetch(url,{cache:'no-store',redirect:'manual',signal:AbortSignal.timeout(15000),...init});if(!response.headers.get('content-type')?.includes('application/json')){const expired=[0,301,302,303,307,308,401].includes(response.status);throw new TimeRequestError(expired?'登录已失效，请重新登录。草稿仍保留在本机。':`服务响应异常（HTTP ${response.status}，未返回数据接口内容）。修改保留在本机，将自动重试。`,expired?401:(response.status>=400?response.status:503),{});}let data:Record<string,unknown>;try{data=await response.json() as Record<string,unknown>;}catch{throw new TimeRequestError(`服务响应不完整（HTTP ${response.status}），修改已保留，将自动重试。`,502,{});}if(!response.ok)throw new TimeRequestError(String(data.error||`请求失败（HTTP ${response.status}）`),response.status,data);return data as T;}
 export class TimeClient{
- session:TimeSession|null=null; data:TimeSnapshot|null=null; pending:PendingTime[]=[]; message='正在连接'; blocked=false; stopped=false; private busy:Promise<void>|null=null; private edits:Promise<unknown>=Promise.resolve(); private acknowledgedVersion=0; private requested=false;
+  session:TimeSession|null=null; data:TimeSnapshot|null=null; pending:PendingTime[]=[]; message='正在连接'; blocked=false; stopped=false; private busy:Promise<void>|null=null; private edits:Promise<unknown>=Promise.resolve(); private acknowledgedVersion=0; private requested=false; private lastHistoryAction:{key:string;version:number;operationId:string}|null=null;
  constructor(public space:'personal'|'demo',private notify:()=>void){}
  scope(){return this.session?.owner+'/'+this.space;}
  emit(){if(!this.stopped)this.notify();}
@@ -19,15 +20,24 @@ export class TimeClient{
  async saveDraft(value:unknown){if(this.session)await localPut('time/draft/'+this.scope(),value);}
  async draft<T>(){return this.session?localGet<T>('time/draft/'+this.scope()):undefined;}
  private edit<T>(action:()=>Promise<T>):Promise<T>{const result=this.edits.then(action);this.edits=result.catch(()=>{});return result;}
- async enqueue(mutation:TimeMutation):Promise<TimeSaveResult>{let operationId='';await this.edit(async()=>{
-  if(!this.session||this.blocked||!this.data)throw new Error('请先联网登录并加载时间看板');
-  await this.loadPending();
-  const baseVersion=Math.max(this.data.version,this.acknowledgedVersion,...this.pending.map(p=>p.baseVersion+1));
+  async enqueue(mutation:TimeMutation):Promise<TimeSaveResult>{let operationId='';const historyKey=mutation.type==='undo'||mutation.type==='redo'?`${mutation.type}:${String(mutation.correctionId||'')}`:'';await this.edit(async()=>{
+   if(!this.session||this.blocked||!this.data)throw new Error('请先联网登录并加载时间看板');
+   await this.loadPending();
+   // Undo/redo buttons can receive two pointer events before the first
+   // response paints. Coalesce that exact action while it is queued, and once
+   // after a successful commit at the same snapshot version. A later version
+   // (including an explicit undo followed by redo) is always a new action.
+   if(historyKey){
+     const queued=this.pending.find(item=>(item.state==='queued')&&`${item.mutation.type}:${String(item.mutation.correctionId||'')}`===historyKey);
+     if(queued){operationId=queued.operationId;return;}
+     if(this.lastHistoryAction?.key===historyKey&&this.lastHistoryAction.version===this.data.version){operationId=this.lastHistoryAction.operationId;return;}
+   }
+   const baseVersion=Math.max(this.data.version,this.acknowledgedVersion,...this.pending.map(p=>p.baseVersion+1));
   const last=this.pending.at(-1);const createdAt=new Date(Math.max(Date.now(),last?Date.parse(last.createdAt)+1:0)).toISOString();
   const item:PendingTime={operationId:crypto.randomUUID(),baseVersion,mutation,state:'queued',createdAt};
   operationId=item.operationId;
   await localPut('time/outbox/'+this.scope()+'/'+item.operationId,item);await this.loadPending();this.message='已保存到本机 · 等待同步';this.emit();
- });await this.sync();const remaining=this.pending.find(p=>p.operationId===operationId);if(remaining&&remaining.state!=='queued')throw new Error(remaining.error||'修改需要核对，已保留在本机');return remaining?{state:'queued',message:remaining.error||this.message}:{state:'synced',message:'已保存'};}
+  });await this.sync();const remaining=this.pending.find(p=>p.operationId===operationId);if(remaining&&remaining.state!=='queued')throw new Error(remaining.error||'修改需要核对，已保留在本机');if(historyKey&&!remaining&&this.data)this.lastHistoryAction={key:historyKey,version:this.data.version,operationId};return remaining?{state:'queued',message:remaining.error||this.message}:{state:'synced',message:'已保存'};}
  async sync(){this.requested=true;if(this.busy)return this.busy;if(!this.session||this.blocked||this.stopped)return;
   this.busy=(async()=>{do{this.requested=false;const healthy=await this.run();if(!healthy)break;}while(this.requested&&!this.blocked&&!this.stopped);})();
   try{await this.busy;}finally{this.busy=null;}

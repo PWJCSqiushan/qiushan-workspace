@@ -59,12 +59,12 @@ export class TimeStore {
       this.q('SELECT timer_id,start_at,category_id,note FROM time_timers WHERE owner_id=? AND space=?',this.owner,space).first<Row>(),
       this.q('SELECT import_id,source,status,source_hash,item_count,accepted,skipped,created_at FROM time_imports WHERE owner_id=? AND space=? ORDER BY created_at ASC',this.owner,space).all<Row>(),
       this.q('SELECT source_key,kind,status,manual,record_id,payload,updated_at FROM time_sources WHERE owner_id=? AND space=? ORDER BY updated_at,source_key',this.owner,space).all<Row>(),
-      this.q('SELECT correction_id,operation_id,kind,before_json,after_json,undone,created_at FROM time_corrections WHERE owner_id=? AND space=? ORDER BY created_at ASC',this.owner,space).all<Row>(),
+      this.q('SELECT correction_id,operation_id,kind,before_json,after_json,undone,created_at,redo_invalidated FROM time_corrections WHERE owner_id=? AND space=? ORDER BY created_at ASC',this.owner,space).all<Row>(),
     ]);
     const head=rows[0] as Row|undefined;
     if(!head)throw new AppError('时间工作区尚未配置',503);
     const imports=(rows[5] as {results:Row[]}).results.map(row=>({id:String(row.import_id),source:String(row.source),status:row.status as TimeImportRecord['status'],...(row.source_hash?{sourceHash:String(row.source_hash)}:{}),itemCount:Number(row.item_count),...(row.accepted===null||row.accepted===undefined?{}:{accepted:Number(row.accepted)}),...(row.skipped===null||row.skipped===undefined?{}:{skipped:Number(row.skipped)}),createdAt:String(row.created_at)}));
-    const corrections=(rows[7] as {results:Row[]}).results.map(row=>({id:String(row.correction_id),operationId:String(row.operation_id),kind:String(row.kind),before:jsonParse<TimeCoreSnapshot>(String(row.before_json),{categories:[],intervals:[],plans:[],timer:null,sources:[]}),after:jsonParse<TimeCoreSnapshot>(String(row.after_json),{categories:[],intervals:[],plans:[],timer:null,sources:[]}),undone:Number(row.undone)!==0,createdAt:String(row.created_at)}));
+    const corrections=(rows[7] as {results:Row[]}).results.map(row=>({id:String(row.correction_id),operationId:String(row.operation_id),kind:String(row.kind),before:jsonParse<TimeCoreSnapshot>(String(row.before_json),{categories:[],intervals:[],plans:[],timer:null,sources:[]}),after:jsonParse<TimeCoreSnapshot>(String(row.after_json),{categories:[],intervals:[],plans:[],timer:null,sources:[]}),undone:Number(row.undone)!==0,...(Number(row.redo_invalidated)?{redoInvalidated:true}:{}),createdAt:String(row.created_at)}));
     const sources=(rows[6] as {results:Row[]}).results.map(row=>({sourceKey:String(row.source_key),kind:row.kind as TimeSourceRecord['kind'],status:row.status as TimeSourceRecord['status'],manual:Number(row.manual)!==0,...(row.record_id?{recordId:String(row.record_id)}:{}),payload:jsonParse<Record<string,unknown>>(String(row.payload||'{}'),{}),updatedAt:String(row.updated_at)}));
     const intervalRows=(rows[2] as {results:Row[]}).results;const planRows=(rows[3] as {results:Row[]}).results;ensureCount(intervalRows.length,'实际区间');ensureCount(planRows.length,'计划');ensureCount(sources.length,'来源记录');
     return {owner:this.owner,space,version:Number(head.version),categories:(rows[1] as {results:Row[]}).results.map(rowCategory),intervals:intervalRows.map(rowInterval),plans:planRows.map(rowPlan),timer:rowTimer(rows[4] as Row|undefined),imports,corrections,sources};
@@ -92,7 +92,7 @@ export class TimeStore {
     return {space:raw.space as TimeSpace,operationId,baseVersion:baseVersion as number,mutation};
   }
 
-  private async writeSnapshot(space:TimeSpace,operationId:string,hash:string,baseVersion:number,next:TimeSnapshot,options:{importRecord?:TimeImportRecord;correction?:TimeCorrection;replaceHistory?:boolean}={}):Promise<boolean>{
+  private async writeSnapshot(space:TimeSpace,operationId:string,hash:string,baseVersion:number,next:TimeSnapshot,options:{importRecord?:TimeImportRecord;correction?:TimeCorrection;correctionUpdate?:{id:string;undone:boolean};replaceHistory?:boolean}={}):Promise<boolean>{
     // Persisted history was validated when written; ordinary edits validate only
     // the newly appended entries. Revalidating every historical full snapshot
     // made tiny edits exceed the Workers CPU budget as history grew.
@@ -114,12 +114,16 @@ export class TimeStore {
     if(options.replaceHistory){
       statements.push(this.q(`DELETE FROM time_imports WHERE owner_id=? AND space=? AND ${h}`,...values([this.owner,space])),this.q(`DELETE FROM time_corrections WHERE owner_id=? AND space=? AND ${h}`,...values([this.owner,space])));
       for(const item of next.imports)statements.push(this.q(`INSERT INTO time_imports(owner_id,space,import_id,source,status,source_hash,item_count,accepted,skipped,created_at,payload) SELECT ?,?,?,?,?,?,?,?,?,?,? WHERE ${h}`,...values([this.owner,space,item.id,item.source,item.status,item.sourceHash||null,item.itemCount,item.accepted??null,item.skipped??null,item.createdAt,JSON.stringify(item)])));
-      for(const item of next.corrections)statements.push(this.q(`INSERT INTO time_corrections(owner_id,space,correction_id,operation_id,kind,before_json,after_json,undone,created_at) SELECT ?,?,?,?,?,?,?,?,? WHERE ${h}`,...values([this.owner,space,item.id,item.operationId,item.kind,JSON.stringify(item.before),JSON.stringify(item.after),item.undone?1:0,item.createdAt])));
+      for(const item of next.corrections)statements.push(this.q(`INSERT INTO time_corrections(owner_id,space,correction_id,operation_id,kind,before_json,after_json,undone,created_at,redo_invalidated) SELECT ?,?,?,?,?,?,?,?,?,? WHERE ${h}`,...values([this.owner,space,item.id,item.operationId,item.kind,JSON.stringify(item.before),JSON.stringify(item.after),item.undone?1:0,item.createdAt,item.redoInvalidated?1:0])));
     } else {
       if(options.importRecord) {const item=options.importRecord;statements.push(this.q(`INSERT INTO time_imports(owner_id,space,import_id,source,status,source_hash,item_count,accepted,skipped,created_at,payload) SELECT ?,?,?,?,?,?,?,?,?,?,? WHERE ${h}`,...values([this.owner,space,item.id,item.source,item.status,item.sourceHash||null,item.itemCount,item.accepted??null,item.skipped??null,item.createdAt,JSON.stringify(item)])));}
-      if(options.correction) {const item=options.correction;statements.push(this.q(`INSERT INTO time_corrections(owner_id,space,correction_id,operation_id,kind,before_json,after_json,undone,created_at) SELECT ?,?,?,?,?,?,?,?,? WHERE ${h}`,...values([this.owner,space,item.id,item.operationId,item.kind,JSON.stringify(item.before),JSON.stringify(item.after),item.undone?1:0,item.createdAt])));}
+      if(options.correction) {const item=options.correction;statements.push(this.q(`INSERT INTO time_corrections(owner_id,space,correction_id,operation_id,kind,before_json,after_json,undone,created_at,redo_invalidated) SELECT ?,?,?,?,?,?,?,?,?,? WHERE ${h}`,...values([this.owner,space,item.id,item.operationId,item.kind,JSON.stringify(item.before),JSON.stringify(item.after),item.undone?1:0,item.createdAt,item.redoInvalidated?1:0])));}
     }
-    if(!options.replaceHistory)for(const item of next.corrections.filter(x=>x.undone))statements.push(this.q(`UPDATE time_corrections SET undone=1 WHERE owner_id=? AND space=? AND correction_id=? AND ${h}`,...values([this.owner,space,item.id])));
+    // Undo and redo both toggle the existing correction row. The old code only
+    // wrote undone=1, which made a redo look successful in the response while
+    // the next read from D1 still reported it as undone.
+    if(!options.replaceHistory&&options.correctionUpdate)statements.push(this.q(`UPDATE time_corrections SET undone=? WHERE owner_id=? AND space=? AND correction_id=? AND ${h}`,...values([options.correctionUpdate.undone?1:0,this.owner,space,options.correctionUpdate.id])));
+    if(!options.replaceHistory&&options.correction)statements.push(this.q(`UPDATE time_corrections SET redo_invalidated=1 WHERE owner_id=? AND space=? AND undone=1 AND ${h}`,...values([this.owner,space])));
     const result={operationId,version:next.version,snapshot:next};
     // D1 limits an entire row to 2 MB. Keep exact idempotent receipts without
     // duplicating uncompressed correction history into one oversized row.
@@ -155,8 +159,9 @@ export class TimeStore {
     if(mutation.type==='import'){
       const accepted=applied.accepted?.length||0,skipped=applied.skipped?.length||0;const sourceHash=await sha256(mutation.items);importRecord={id:mutation.importId&&ID_RE.test(mutation.importId)?mutation.importId:crypto.randomUUID(),source:mutation.source,status:skipped?'partial':'committed',sourceHash,itemCount:mutation.items.length,accepted,skipped,createdAt:nowIso()};next.imports=[...before.imports,importRecord];
     }
-    if(correction)next.corrections=[...before.corrections,correction];
-    const ok=await this.writeSnapshot(space,operationId,hash,baseVersion,next,{importRecord,correction});
+    if(correction)next.corrections=[...before.corrections.map(item=>item.undone?{...item,redoInvalidated:true}:item),correction];
+    const correctionUpdate=mutation.type==='undo'||mutation.type==='redo'?{id:mutation.correctionId,undone:mutation.type==='undo'}:undefined;
+    const ok=await this.writeSnapshot(space,operationId,hash,baseVersion,next,{importRecord,correction,correctionUpdate});
     if(!ok){const final=await this.receipt(space,operationId,hash);if(final)return final;throw new TimeConflictError(await this.snapshot(space));}
     const final=await this.receipt(space,operationId,hash);if(final)return final;throw new AppError('时间操作回执缺失',503);
   }
