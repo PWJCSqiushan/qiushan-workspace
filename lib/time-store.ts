@@ -36,6 +36,11 @@ function rowInterval(row:Row):TimeInterval{return {...jsonParse<Pick<TimeInterva
 function rowPlan(row:Row):TimePlan{return {...rowInterval(row),...courseMetadata(jsonParse(String(row.course_metadata||'{}'),{})),id:String(row.plan_id),status:row.status as TimePlan['status'],...(row.attendance?{attendance:String(row.attendance) as TimePlan['attendance']}: {})};}
 function rowTimer(row:Row|undefined):TimeTimer|null{return row?{id:String(row.timer_id),start:String(row.start_at),categoryId:String(row.category_id),...(row.note?{note:String(row.note)}:{})}:null;}
 
+/** Full correction payloads stay in D1; sync needs only history metadata. */
+function syncSnapshot(snapshot:TimeSnapshot):TimeSnapshot {
+ return {...snapshot,corrections:snapshot.corrections.map(({before,after,...item})=>({...item,before:{categories:[],intervals:[],plans:[],timer:null,sources:[]},after:{categories:[],intervals:[],plans:[],timer:null,sources:[]}}))};
+}
+
 export class TimeStore {
   constructor(public db:D1Database,public owner:string){}
   q(sql:string,...args:unknown[]){return this.db.prepare(sql).bind(...args);}
@@ -49,7 +54,7 @@ export class TimeStore {
     ]);
   }
 
-  async snapshot(space:TimeSpace):Promise<TimeSnapshot>{
+  async snapshot(space:TimeSpace,history: "full"|"summary"|{correctionId:string}="full"):Promise<TimeSnapshot>{
     await this.ensure(space);
     const rows=await Promise.all([
       this.q('SELECT version FROM time_heads WHERE owner_id=? AND space=?',this.owner,space).first<Row>(),
@@ -59,12 +64,12 @@ export class TimeStore {
       this.q('SELECT timer_id,start_at,category_id,note FROM time_timers WHERE owner_id=? AND space=?',this.owner,space).first<Row>(),
       this.q('SELECT import_id,source,status,source_hash,item_count,accepted,skipped,created_at FROM time_imports WHERE owner_id=? AND space=? ORDER BY created_at ASC',this.owner,space).all<Row>(),
       this.q('SELECT source_key,kind,status,manual,record_id,payload,updated_at FROM time_sources WHERE owner_id=? AND space=? ORDER BY updated_at,source_key',this.owner,space).all<Row>(),
-      this.q('SELECT correction_id,operation_id,kind,before_json,after_json,undone,created_at,redo_invalidated FROM time_corrections WHERE owner_id=? AND space=? ORDER BY created_at ASC',this.owner,space).all<Row>(),
+      this.q(`SELECT correction_id,operation_id,kind,${history==='full'?'before_json,after_json':typeof history==='object'?'CASE WHEN correction_id=? THEN before_json ELSE NULL END AS before_json,CASE WHEN correction_id=? THEN after_json ELSE NULL END AS after_json':'NULL AS before_json,NULL AS after_json'},undone,created_at,redo_invalidated FROM time_corrections WHERE owner_id=? AND space=? ORDER BY created_at ASC`,...(typeof history==='object'?[history.correctionId,history.correctionId]:[]),this.owner,space).all<Row>(),
     ]);
     const head=rows[0] as Row|undefined;
     if(!head)throw new AppError('时间工作区尚未配置',503);
     const imports=(rows[5] as {results:Row[]}).results.map(row=>({id:String(row.import_id),source:String(row.source),status:row.status as TimeImportRecord['status'],...(row.source_hash?{sourceHash:String(row.source_hash)}:{}),itemCount:Number(row.item_count),...(row.accepted===null||row.accepted===undefined?{}:{accepted:Number(row.accepted)}),...(row.skipped===null||row.skipped===undefined?{}:{skipped:Number(row.skipped)}),createdAt:String(row.created_at)}));
-    const corrections=(rows[7] as {results:Row[]}).results.map(row=>({id:String(row.correction_id),operationId:String(row.operation_id),kind:String(row.kind),before:jsonParse<TimeCoreSnapshot>(String(row.before_json),{categories:[],intervals:[],plans:[],timer:null,sources:[]}),after:jsonParse<TimeCoreSnapshot>(String(row.after_json),{categories:[],intervals:[],plans:[],timer:null,sources:[]}),undone:Number(row.undone)!==0,...(Number(row.redo_invalidated)?{redoInvalidated:true}:{}),createdAt:String(row.created_at)}));
+    const corrections=(rows[7] as {results:Row[]}).results.map(row=>({id:String(row.correction_id),operationId:String(row.operation_id),kind:String(row.kind),before:jsonParse<TimeCoreSnapshot>(String(row.before_json||''),{categories:[],intervals:[],plans:[],timer:null,sources:[]}),after:jsonParse<TimeCoreSnapshot>(String(row.after_json||''),{categories:[],intervals:[],plans:[],timer:null,sources:[]}),undone:Number(row.undone)!==0,...(Number(row.redo_invalidated)?{redoInvalidated:true}:{}),createdAt:String(row.created_at)}));
     const sources=(rows[6] as {results:Row[]}).results.map(row=>({sourceKey:String(row.source_key),kind:row.kind as TimeSourceRecord['kind'],status:row.status as TimeSourceRecord['status'],manual:Number(row.manual)!==0,...(row.record_id?{recordId:String(row.record_id)}:{}),payload:jsonParse<Record<string,unknown>>(String(row.payload||'{}'),{}),updatedAt:String(row.updated_at)}));
     const intervalRows=(rows[2] as {results:Row[]}).results;const planRows=(rows[3] as {results:Row[]}).results;ensureCount(intervalRows.length,'实际区间');ensureCount(planRows.length,'计划');ensureCount(sources.length,'来源记录');
     return {owner:this.owner,space,version:Number(head.version),categories:(rows[1] as {results:Row[]}).results.map(rowCategory),intervals:intervalRows.map(rowInterval),plans:planRows.map(rowPlan),timer:rowTimer(rows[4] as Row|undefined),imports,corrections,sources};
@@ -124,7 +129,7 @@ export class TimeStore {
     // the next read from D1 still reported it as undone.
     if(!options.replaceHistory&&options.correctionUpdate)statements.push(this.q(`UPDATE time_corrections SET undone=? WHERE owner_id=? AND space=? AND correction_id=? AND ${h}`,...values([options.correctionUpdate.undone?1:0,this.owner,space,options.correctionUpdate.id])));
     if(!options.replaceHistory&&options.correction)statements.push(this.q(`UPDATE time_corrections SET redo_invalidated=1 WHERE owner_id=? AND space=? AND undone=1 AND ${h}`,...values([this.owner,space])));
-    const result={operationId,version:next.version,snapshot:next};
+    const result={operationId,version:next.version,snapshot:syncSnapshot(next)};
     // D1 limits an entire row to 2 MB. Keep exact idempotent receipts without
     // duplicating uncompressed correction history into one oversized row.
     const receiptJson=JSON.stringify(result);
@@ -152,41 +157,41 @@ export class TimeStore {
       return this.restoreSnapshot(space,backup.time,operationId,baseVersion);
     }
     const hash=await sha256(envelope);const prior=await this.receipt(space,operationId,hash);if(prior)return prior;
-    const before=await this.snapshot(space);if(before.version!==baseVersion)throw new TimeConflictError(before);
+    const before=await this.snapshot(space,mutation.type==='undo'||mutation.type==='redo'?{correctionId:mutation.correctionId}:'summary');if(before.version!==baseVersion)throw new TimeConflictError(before);
     let applied;
     try{applied=applyTimeMutation(before,mutation,operationId,new Date());}catch(error){if(error instanceof TimeValidationError||error instanceof AppError)throw error;throw new AppError('时间操作无效');}
-    const next=applied.snapshot;if(next.version===before.version)return {operationId,version:next.version,snapshot:next,changed:false};let importRecord:TimeImportRecord|undefined;let correction=applied.correction;
+    const next=applied.snapshot;if(next.version===before.version)return {operationId,version:next.version,snapshot:syncSnapshot(next),changed:false};let importRecord:TimeImportRecord|undefined;let correction=applied.correction;
     if(mutation.type==='import'){
       const accepted=applied.accepted?.length||0,skipped=applied.skipped?.length||0;const sourceHash=await sha256(mutation.items);importRecord={id:mutation.importId&&ID_RE.test(mutation.importId)?mutation.importId:crypto.randomUUID(),source:mutation.source,status:skipped?'partial':'committed',sourceHash,itemCount:mutation.items.length,accepted,skipped,createdAt:nowIso()};next.imports=[...before.imports,importRecord];
     }
     if(correction)next.corrections=[...before.corrections.map(item=>item.undone?{...item,redoInvalidated:true}:item),correction];
     const correctionUpdate=mutation.type==='undo'||mutation.type==='redo'?{id:mutation.correctionId,undone:mutation.type==='undo'}:undefined;
     const ok=await this.writeSnapshot(space,operationId,hash,baseVersion,next,{importRecord,correction,correctionUpdate});
-    if(!ok){const final=await this.receipt(space,operationId,hash);if(final)return final;throw new TimeConflictError(await this.snapshot(space));}
+    if(!ok){const final=await this.receipt(space,operationId,hash);if(final)return final;throw new TimeConflictError(await this.snapshot(space,"summary"));}
     const final=await this.receipt(space,operationId,hash);if(final)return final;throw new AppError('时间操作回执缺失',503);
   }
 
-  async previewCourses(space:TimeSpace){return previewCourseMigration(await this.snapshot(space));}
+  async previewCourses(space:TimeSpace){return previewCourseMigration(await this.snapshot(space,"summary"));}
   async rollover(space:TimeSpace){
-    for(let attempt=0;attempt<3;attempt++){const before=await this.snapshot(space);try{const result=await this.mutate({space,baseVersion:before.version,operationId:'rollover-'+crypto.randomUUID(),mutation:{type:'rolloverCourses'}});return {...result,version:Number(result.version),changed:result.version!==before.version};}catch(error){if(!(error instanceof TimeConflictError)||attempt===2)throw error;}}
+    for(let attempt=0;attempt<3;attempt++){const before=await this.snapshot(space,"summary");try{const result=await this.mutate({space,baseVersion:before.version,operationId:'rollover-'+crypto.randomUUID(),mutation:{type:'rolloverCourses'}});return {...result,version:Number(result.version),changed:result.version!==before.version};}catch(error){if(!(error instanceof TimeConflictError)||attempt===2)throw error;}}
     throw new AppError('课程补算冲突',409);
   }
 
-  async stats(space:TimeSpace,options:{from?:string;to?:string;period?:'day'|'week'|'month';now?:Date}={}):Promise<TimeStats>{return calculateTimeStats(await this.snapshot(space),options);}
+  async stats(space:TimeSpace,options:{from?:string;to?:string;period?:'day'|'week'|'month';now?:Date}={}):Promise<TimeStats>{return calculateTimeStats(await this.snapshot(space,"summary"),options);}
 
   async previewImport(space:TimeSpace,items:ImportCandidate[],source='import',replace=false){
-    const snapshot=await this.snapshot(space);const operationId='preview-'+crypto.randomUUID();const hash=await sha256({items,source,replace});
+    const snapshot=await this.snapshot(space,"summary");const operationId='preview-'+crypto.randomUUID();const hash=await sha256({items,source,replace});
     try{const result=applyTimeMutation(snapshot,{type:'import',items,source,replace},operationId,new Date());return {space,baseVersion:snapshot.version,source,sourceHash:hash,itemCount:items.length,accepted:result.accepted||[],skipped:result.skipped||[],preview:result.snapshot};}catch(error){if(error instanceof TimeValidationError)return {space,baseVersion:snapshot.version,source,sourceHash:hash,itemCount:items.length,accepted:[],skipped:[],error:error.message,code:(error.details as {code?:string}|undefined)?.code,details:error.details};throw error;}
   }
 
   async exportSnapshot(space:TimeSpace){return this.snapshot(space);}
 
   async restoreSnapshot(space:TimeSpace,input:TimeSnapshot,operationId:string,expectedVersion:number){
-    await this.ensure(space);const hash=await sha256({space,operationId,input});const prior=await this.receipt(space,operationId,hash);if(prior)return prior;const current=await this.snapshot(space);if(current.version!==expectedVersion)throw new TimeConflictError(current);
+    await this.ensure(space);const hash=await sha256({space,operationId,input});const prior=await this.receipt(space,operationId,hash);if(prior)return prior;const current=await this.snapshot(space,"summary");if(current.version!==expectedVersion)throw new TimeConflictError(current);
     if(input.space!==space)throw new AppError('时间备份所属工作区不一致');
     const core:TimeCoreSnapshot={categories:clone(input.categories),intervals:clone(input.intervals),plans:clone(input.plans),timer:clone(input.timer),sources:clone(input.sources||[])};
     validateTimeCoreSnapshot(core);validateTimeHistory(input);
-    const next:TimeSnapshot={...clone(input),owner:this.owner,space,version:expectedVersion+1,...core};const ok=await this.writeSnapshot(space,operationId,hash,expectedVersion,next,{replaceHistory:true});if(!ok)throw new TimeConflictError(await this.snapshot(space));const final=await this.receipt(space,operationId,hash);if(final)return final;throw new AppError('时间恢复回执缺失',503);
+    const next:TimeSnapshot={...clone(input),owner:this.owner,space,version:expectedVersion+1,...core};const ok=await this.writeSnapshot(space,operationId,hash,expectedVersion,next,{replaceHistory:true});if(!ok)throw new TimeConflictError(await this.snapshot(space,"summary"));const final=await this.receipt(space,operationId,hash);if(final)return final;throw new AppError('时间恢复回执缺失',503);
   }
 
   async createGarminConnection(space:TimeSpace,scopes=['time:import']){
