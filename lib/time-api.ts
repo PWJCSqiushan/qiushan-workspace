@@ -38,6 +38,8 @@ function routeParts(request:Request){return new URL(request.url).pathname.split(
 /** Dispatch all /api/time/* requests after the caller has authenticated. */
 export async function handleTimeRequest(request:Request,store:TimeStore){
   const url=new URL(request.url);const parts=routeParts(request);const top=parts[0]||'';const query=url.searchParams;const method=request.method.toUpperCase();
+  if(top==='courses'&&parts[1]==='migration'&&method==='GET')return json(await store.previewCourses(spaceOf(query.get('space')||'personal')));
+  if(top==='courses'&&parts[1]==='rollover'&&method==='POST'){const input=await body(request) as Record<string,unknown>;const result=await store.rollover(spaceOf(input.space||'personal'));return json(result.changed?result:{version:result.version,changed:false});}
   if(method==='GET'&&(top==='sync'||top==='')){const space=spaceOf(query.get('space')||'personal');return json(await store.snapshot(space));}
   if(method==='GET'&&top==='stats'){const space=spaceOf(query.get('space')||'personal');const period=query.get('period') as 'day'|'week'|'month'|null;if(period&& !['day','week','month'].includes(period))throw new AppError('统计周期无效');return json(await store.stats(space,{from:query.get('from')||undefined,to:query.get('to')||undefined,period:period||undefined}));}
   if(method==='GET'&&top==='export'){const space=spaceOf(query.get('space')||'personal');return json(await exportTimeBackup(store,space));}

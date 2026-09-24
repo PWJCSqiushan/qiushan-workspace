@@ -1,0 +1,19 @@
+.time-navigator{flex:none;min-width:0;padding:6px 44px 0;border-top:1px solid var(--time-line,#ccd1d7);font-variant-numeric:tabular-nums}
+.time-navigator-caption,.time-navigator-domain{display:flex;justify-content:space-between;gap:12px;font-size:10px;color:var(--time-muted,#737d89);line-height:1.4}
+.time-navigator-caption{color:var(--time-fg,inherit)}
+.time-navigator-rail{position:relative;height:44px;isolation:isolate}
+.time-navigator-rail button{touch-action:none;user-select:none;-webkit-user-select:none;border:0;border-radius:4px;margin:0;padding:0;position:absolute;height:44px;top:0;min-width:44px;color:var(--time-fg,inherit);background:transparent;cursor:ew-resize}
+.time-navigator-rail .time-navigator-overview{inset:0;width:100%;background:linear-gradient(var(--time-line,#c5ccd6),var(--time-line,#c5ccd6)) center/100% 10px no-repeat;cursor:pointer}
+.time-navigator-selection{position:absolute;top:14px;height:16px;background:var(--time-accent,#748caa);opacity:.35;border-radius:3px;pointer-events:none}
+.time-navigator-rail .time-navigator-pan{transform:translateX(-50%);min-width:44px;cursor:grab;z-index:1;font-size:12px;letter-spacing:2px}
+.time-navigator-rail .time-navigator-pan:active{cursor:grabbing}
+.time-navigator-rail .time-navigator-handle{width:44px;transform:translateX(-50%);z-index:2;display:grid;place-items:center}
+.time-navigator-handle i{width:5px;height:22px;background:var(--time-accent,#748caa);border-radius:3px;box-shadow:0 0 0 2px var(--time-bg,#fff);pointer-events:none}
+.time-navigator-rail .time-navigator-handle.start{transform:translateX(-100%);justify-items:end}
+.time-navigator-rail .time-navigator-handle.end{transform:none;justify-items:start}
+.time-navigator-rail.compact{height:88px}
+.time-navigator-rail.compact .time-navigator-pan{top:44px;background:color-mix(in srgb,var(--time-accent,#748caa) 15%,transparent)}
+.time-navigator-rail button:hover{background-color:color-mix(in srgb,var(--time-accent,#748caa) 12%,transparent)}
+.time-navigator-rail button:focus-visible{outline:2px solid var(--time-plan,#748caa);outline-offset:-2px;z-index:3}
+.time-navigator-domain{font-size:9px}
+.time-navigator-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}

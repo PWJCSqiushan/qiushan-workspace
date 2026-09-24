@@ -3,7 +3,7 @@ import {Buffer} from 'node:buffer';
 import {AppError} from './workspace.ts';
 import {sha256,stable} from './protocol.ts';
 import {
-  DEFAULT_TIME_CATEGORIES,applyTimeMutation,calculateTimeStats,canonicalTimestamp,
+  DEFAULT_TIME_CATEGORIES,applyTimeMutation,previewCourseMigration,courseMetadata,calculateTimeStats,canonicalTimestamp,
   type ImportCandidate,type TimeCategory,type TimeCoreSnapshot,type TimeCorrection,
   type TimeImportRecord,type TimeInterval,type TimeMutation,type TimeMutationEnvelope,
   type TimePlan,type TimeSnapshot,type TimeSourceRecord,type TimeStats,type TimeTimer,
@@ -32,8 +32,8 @@ function guard(owner:string,space:TimeSpace,version:number,operationId:string){r
 }
 
 function rowCategory(row:Row):TimeCategory{return {id:String(row.category_id),name:String(row.name),color:String(row.color),active:Number(row.active)!==0};}
-function rowInterval(row:Row):TimeInterval{return {id:String(row.interval_id),start:String(row.start_at),end:String(row.end_at),categoryId:String(row.category_id),...(row.note?{note:String(row.note)}:{}),...(row.source_key?{sourceKey:String(row.source_key)}:{}),manual:Number(row.manual)!==0,...(Number(row.estimated)!==0?{estimated:true}:{}),version:Number(row.version)||1};}
-function rowPlan(row:Row):TimePlan{return {...rowInterval(row),id:String(row.plan_id),status:row.status as TimePlan['status'],...(row.attendance?{attendance:String(row.attendance) as TimePlan['attendance']}: {})};}
+function rowInterval(row:Row):TimeInterval{return {...jsonParse<Pick<TimeInterval,'courseGroupKey'|'generatedBy'>>(String(row.course_metadata||'{}'),{}),id:String(row.interval_id),start:String(row.start_at),end:String(row.end_at),categoryId:String(row.category_id),...(row.note?{note:String(row.note)}:{}),...(row.source_key?{sourceKey:String(row.source_key)}:{}),manual:Number(row.manual)!==0,...(Number(row.estimated)!==0?{estimated:true}:{}),version:Number(row.version)||1};}
+function rowPlan(row:Row):TimePlan{return {...rowInterval(row),...courseMetadata(jsonParse(String(row.course_metadata||'{}'),{})),id:String(row.plan_id),status:row.status as TimePlan['status'],...(row.attendance?{attendance:String(row.attendance) as TimePlan['attendance']}: {})};}
 function rowTimer(row:Row|undefined):TimeTimer|null{return row?{id:String(row.timer_id),start:String(row.start_at),categoryId:String(row.category_id),...(row.note?{note:String(row.note)}:{})}:null;}
 
 export class TimeStore {
@@ -54,8 +54,8 @@ export class TimeStore {
     const rows=await Promise.all([
       this.q('SELECT version FROM time_heads WHERE owner_id=? AND space=?',this.owner,space).first<Row>(),
       this.q('SELECT category_id,name,color,active FROM time_categories WHERE owner_id=? AND space=? ORDER BY ordinal,category_id',this.owner,space).all<Row>(),
-      this.q('SELECT interval_id,start_at,end_at,category_id,note,source_key,manual,version,estimated FROM time_intervals WHERE owner_id=? AND space=? ORDER BY start_at,interval_id',this.owner,space).all<Row>(),
-      this.q('SELECT plan_id,start_at,end_at,category_id,note,source_key,status,manual,version,estimated,attendance FROM time_plans WHERE owner_id=? AND space=? ORDER BY start_at,plan_id',this.owner,space).all<Row>(),
+      this.q('SELECT interval_id,start_at,end_at,category_id,note,source_key,manual,version,estimated,course_metadata FROM time_intervals WHERE owner_id=? AND space=? ORDER BY start_at,interval_id',this.owner,space).all<Row>(),
+      this.q('SELECT plan_id,start_at,end_at,category_id,note,source_key,status,manual,version,estimated,attendance,course_metadata FROM time_plans WHERE owner_id=? AND space=? ORDER BY start_at,plan_id',this.owner,space).all<Row>(),
       this.q('SELECT timer_id,start_at,category_id,note FROM time_timers WHERE owner_id=? AND space=?',this.owner,space).first<Row>(),
       this.q('SELECT import_id,source,status,source_hash,item_count,accepted,skipped,created_at FROM time_imports WHERE owner_id=? AND space=? ORDER BY created_at ASC',this.owner,space).all<Row>(),
       this.q('SELECT source_key,kind,status,manual,record_id,payload,updated_at FROM time_sources WHERE owner_id=? AND space=? ORDER BY updated_at,source_key',this.owner,space).all<Row>(),
@@ -101,9 +101,9 @@ export class TimeStore {
       this.q(`DELETE FROM time_categories WHERE owner_id=? AND space=? AND ${h}`,...values([this.owner,space])),
       ...next.categories.map((category,ordinal)=>this.q(`INSERT INTO time_categories(owner_id,space,category_id,name,color,active,ordinal) SELECT ?,?,?,?,?,?,? WHERE ${h}`,...values([this.owner,space,category.id,category.name,category.color,category.active?1:0,ordinal]))),
       this.q(`DELETE FROM time_intervals WHERE owner_id=? AND space=? AND ${h}`,...values([this.owner,space])),
-      ...next.intervals.map(interval=>this.q(`INSERT INTO time_intervals(owner_id,space,interval_id,start_at,end_at,category_id,note,source_key,manual,estimated,version,created_at,updated_at) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,? WHERE ${h}`,...values([this.owner,space,interval.id,interval.start,interval.end,interval.categoryId,interval.note||null,interval.sourceKey||null,interval.manual===false?0:1,interval.estimated?1:0,interval.version||1,stamp,stamp]))),
+      ...next.intervals.map(interval=>this.q(`INSERT INTO time_intervals(owner_id,space,interval_id,start_at,end_at,category_id,note,source_key,manual,estimated,version,created_at,updated_at,course_metadata) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE ${h}`,...values([this.owner,space,interval.id,interval.start,interval.end,interval.categoryId,interval.note||null,interval.sourceKey||null,interval.manual===false?0:1,interval.estimated?1:0,interval.version||1,stamp,stamp,JSON.stringify({courseGroupKey:interval.courseGroupKey,generatedBy:interval.generatedBy})]))),
       this.q(`DELETE FROM time_plans WHERE owner_id=? AND space=? AND ${h}`,...values([this.owner,space])),
-      ...next.plans.map(plan=>this.q(`INSERT INTO time_plans(owner_id,space,plan_id,start_at,end_at,category_id,note,source_key,status,manual,estimated,version,created_at,updated_at,attendance) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE ${h}`,...values([this.owner,space,plan.id,plan.start,plan.end,plan.categoryId,plan.note||null,plan.sourceKey||null,plan.status,plan.manual===false?0:1,plan.estimated?1:0,plan.version||1,stamp,stamp,plan.attendance||null]))),
+      ...next.plans.map(plan=>this.q(`INSERT INTO time_plans(owner_id,space,plan_id,start_at,end_at,category_id,note,source_key,status,manual,estimated,version,created_at,updated_at,attendance,course_metadata) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE ${h}`,...values([this.owner,space,plan.id,plan.start,plan.end,plan.categoryId,plan.note||null,plan.sourceKey||null,plan.status,plan.manual===false?0:1,plan.estimated?1:0,plan.version||1,stamp,stamp,plan.attendance||null,JSON.stringify({...courseMetadata(plan),courseGroupKey:plan.courseGroupKey})]))),
       this.q(`DELETE FROM time_timers WHERE owner_id=? AND space=? AND ${h}`,...values([this.owner,space])),
     ];
     if(next.timer)statements.push(this.q(`INSERT INTO time_timers(owner_id,space,timer_id,start_at,category_id,note,version,updated_at) SELECT ?,?,?,?,?,?,?,? WHERE ${h}`,...values([this.owner,space,next.timer.id||crypto.randomUUID(),next.timer.start,next.timer.categoryId,next.timer.note||null,1,stamp])));
@@ -146,7 +146,7 @@ export class TimeStore {
     const before=await this.snapshot(space);if(before.version!==baseVersion)throw new TimeConflictError(before);
     let applied;
     try{applied=applyTimeMutation(before,mutation,operationId,new Date());}catch(error){if(error instanceof TimeValidationError||error instanceof AppError)throw error;throw new AppError('时间操作无效');}
-    const next=applied.snapshot;let importRecord:TimeImportRecord|undefined;let correction=applied.correction;
+    const next=applied.snapshot;if(next.version===before.version)return {operationId,version:next.version,snapshot:next,changed:false};let importRecord:TimeImportRecord|undefined;let correction=applied.correction;
     if(mutation.type==='import'){
       const accepted=applied.accepted?.length||0,skipped=applied.skipped?.length||0;const sourceHash=await sha256(mutation.items);importRecord={id:mutation.importId&&ID_RE.test(mutation.importId)?mutation.importId:crypto.randomUUID(),source:mutation.source,status:skipped?'partial':'committed',sourceHash,itemCount:mutation.items.length,accepted,skipped,createdAt:nowIso()};next.imports=[...before.imports,importRecord];
     }
@@ -154,6 +154,12 @@ export class TimeStore {
     const ok=await this.writeSnapshot(space,operationId,hash,baseVersion,next,{importRecord,correction});
     if(!ok){const final=await this.receipt(space,operationId,hash);if(final)return final;throw new TimeConflictError(await this.snapshot(space));}
     const final=await this.receipt(space,operationId,hash);if(final)return final;throw new AppError('时间操作回执缺失',503);
+  }
+
+  async previewCourses(space:TimeSpace){return previewCourseMigration(await this.snapshot(space));}
+  async rollover(space:TimeSpace){
+    for(let attempt=0;attempt<3;attempt++){const before=await this.snapshot(space);try{const result=await this.mutate({space,baseVersion:before.version,operationId:'rollover-'+crypto.randomUUID(),mutation:{type:'rolloverCourses'}});return {...result,version:Number(result.version),changed:result.version!==before.version};}catch(error){if(!(error instanceof TimeConflictError)||attempt===2)throw error;}}
+    throw new AppError('课程补算冲突',409);
   }
 
   async stats(space:TimeSpace,options:{from?:string;to?:string;period?:'day'|'week'|'month';now?:Date}={}):Promise<TimeStats>{return calculateTimeStats(await this.snapshot(space),options);}
@@ -181,4 +187,9 @@ export class TimeStore {
   async revokeGarmin(space:TimeSpace,connectionId?:string){const current=connectionId||String((await this.q('SELECT connection_id FROM time_garmin_connections WHERE owner_id=? AND space=? ORDER BY created_at DESC LIMIT 1',this.owner,space).first<Row>())?.connection_id||'');if(!current)throw new AppError('Garmin 尚未连接',404);const stamp=nowIso();const result=await this.q("UPDATE time_garmin_connections SET status='revoked',revoked_at=? WHERE owner_id=? AND space=? AND connection_id=? AND status='active'",stamp,this.owner,space,current).run();if(!result.meta?.changes)throw new AppError('Garmin 连接不存在或已撤销',404);return this.garminStatus(space,current);}
   async verifyGarmin(space:TimeSpace,connectionId:string|undefined,token:string){const row=await (connectionId?this.q("SELECT connection_id,status,token_hash,scopes FROM time_garmin_connections WHERE owner_id=? AND space=? AND connection_id=?",this.owner,space,connectionId):this.q("SELECT connection_id,status,token_hash,scopes FROM time_garmin_connections WHERE owner_id=? AND space=? ORDER BY created_at DESC LIMIT 1",this.owner,space)).first<Row>();if(!row||row.status!=='active'||await sha256(token)!==row.token_hash)throw new AppError('Garmin 连接无效或已撤销',401);return {connectionId:String(row.connection_id),scopes:jsonParse<string[]>(String(row.scopes),[])};}
   async markGarminSync(space:TimeSpace,connectionId:string,requestId?:string){const stamp=nowIso();await this.q('UPDATE time_garmin_connections SET last_sync_at=? WHERE owner_id=? AND space=? AND connection_id=?',stamp,this.owner,space,connectionId).run();if(requestId)await this.q("UPDATE time_sync_requests SET status='completed',completed_at=? WHERE owner_id=? AND space=? AND request_id=? AND status='queued'",stamp,this.owner,space,requestId).run();}
+}
+
+export async function rolloverAllCourses(db:D1Database){
+  const heads=await db.prepare('SELECT owner_id,space FROM time_heads').all<{owner_id:string;space:TimeSpace}>();
+  return Promise.all(heads.results.map(row=>new TimeStore(db,row.owner_id).rollover(row.space)));
 }

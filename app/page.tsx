@@ -516,8 +516,8 @@ export default function Home() {
             <Mountain />
           </div>
           <div>
-            <h1>丘山 · 个人工作台<BoardSwitch current="workflow" space={space}/></h1>
-            <div className="eyebrow">QIUSHAN / PERSONAL WORKSPACE</div>
+            <h1>丘山流调<BoardSwitch current="workflow" space={space}/></h1>
+            <div className="eyebrow">任务流水</div>
           </div>
         </div>
         <div className="head-actions">

@@ -35,6 +35,10 @@ export type ImportCandidate = {
   sourceKey: string;
   kind: ImportKind;
   estimated?: boolean;
+  courseName?:string;
+  location?:string;
+  importSource?:string;
+  sourcePeriods?:number[];
 };
 
 export type ImportIssueLevel = 'error' | 'warning';
@@ -573,11 +577,18 @@ export function normalizeTimetable(
     const segments = directStart && directEnd ? [{index:get('period')||directStart,start:directStart,end:directEnd}] : periodIndexes(get('period')).map(index=>periods!.find(p=>p.index===index)!);
     for(const segment of segments){
       const sourceKey = 'timetable:'+fnv1a(source+':'+date+':'+segment.index);
-      items.push({start:date+'T'+segment.start+':00'+TIME_OFFSET,end:date+'T'+segment.end+':00'+TIME_OFFSET,categoryId:'class',note:[course,get('note')].filter(Boolean).join(' · '),sourceKey,kind:'plan'});
+      items.push({start:date+'T'+segment.start+':00'+TIME_OFFSET,end:date+'T'+segment.end+':00'+TIME_OFFSET,categoryId:'class',courseName:course,importSource:source,...(get('note')?{location:get('note')}:{}),...(typeof segment.index==='number'?{sourcePeriods:[segment.index]}:{}),note:[course,get('note')].filter(Boolean).join(' · '),sourceKey,kind:'plan'});
     }
   });
   const deduped = [...new Map(items.map((item) => [item.sourceKey, item])).values()];
-  return {...previewFrom(deduped, issues, source), skippedRows};
+  return {...previewFrom(mergeCourseCandidates(deduped), issues, source), skippedRows};
+}
+
+function mergeCourseCandidates(items:ImportCandidate[]):ImportCandidate[]{
+  const result:ImportCandidate[]=[];
+  for(const item of [...items].sort((a,b)=>Date.parse(a.start)-Date.parse(b.start))){const prev=result.at(-1);const gap=prev?(Date.parse(item.start)-Date.parse(prev.end))/60000:-1;
+    if(prev&&prev.courseName===item.courseName&&prev.importSource===item.importSource&&prev.start.slice(0,10)===item.start.slice(0,10)&&prev.sourcePeriods?.length&&item.sourcePeriods?.length&&Math.max(...prev.sourcePeriods)+1===Math.min(...item.sourcePeriods)&&gap>=0&&gap<=10){prev.end=item.end;prev.sourcePeriods.push(...item.sourcePeriods);}else result.push({...item,...(item.sourcePeriods?{sourcePeriods:[...item.sourcePeriods]}:{})});
+  }return result;
 }
 
 export const normalizeTimetableRows = normalizeTimetable;
@@ -1010,5 +1021,5 @@ export function normalizeSemesterTimetable(input: TimetableInput, options: Timet
   }
 
   const deduped = [...new Map(items.map((item) => [item.sourceKey, item])).values()];
-  return {...previewFrom(deduped, [...issueMap.values()], source), skippedRows: [...skippedRows].sort((a, b) => a - b)};
+  return {...previewFrom(mergeCourseCandidates(deduped), [...issueMap.values()], source), skippedRows: [...skippedRows].sort((a, b) => a - b)};
 }

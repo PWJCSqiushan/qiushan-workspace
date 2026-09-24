@@ -43,18 +43,19 @@ void test('does not guess missing endpoints or unknown activity labels', () => {
   assert.match(unknown.errors.join(' '), /无法判断活动分类/);
 });
 
-void test('normalizes timetable periods while excluding non-current-week rows and preserving breaks', () => {
+void test('merges consecutive timetable periods including their break and preserves provenance', () => {
   const result = normalizeTimetable([
     {date: '2026-09-23', period: '1-2', course: '数据结构', note: 'A101', week: '第3周'},
     {date: '2026-09-23', period: '3', course: '非本周课程', note: '', week: '非本周'},
     {date: '2026-09-28', period: '1', course: '下周课程', note: '', week: '第4周'},
   ], {source: 'test', weekStart: '2026-09-21', weekEnd: '2026-09-27', periods});
-  assert.equal(result.items.length, 2);
+  assert.equal(result.items.length, 1);
   assert.equal(result.items[0].kind, 'plan');
   assert.equal(result.items[0].start, '2026-09-23T08:00:00+08:00');
-  assert.equal(result.items[0].end, '2026-09-23T08:45:00+08:00');
-  assert.equal(result.items[1].start, '2026-09-23T08:55:00+08:00');
-  assert.equal(result.items[1].end, '2026-09-23T09:40:00+08:00');
+  assert.equal(result.items[0].end, '2026-09-23T09:40:00+08:00');
+  assert.deepEqual(result.items[0].sourcePeriods,[1,2]);
+  assert.equal(result.items[0].courseName,'数据结构');
+  assert.equal(result.items[0].importSource,'test');
   assert.equal(result.skippedRows.length, 2);
   assert.equal(result.items[0].note, '数据结构 · A101');
 });
@@ -67,7 +68,7 @@ void test('requires explicit semester recurrence context instead of inventing od
   assert.ok(result.errors.some((message) => /学期批量导入/.test(message)));
 });
 
-void test('expands explicit row week ranges and empty week cells without importing breaks', () => {
+void test('expands explicit row week ranges and empty week cells with merged consecutive course periods', () => {
   const result = normalizeTimetable([
     {weekday: '三', week: '1-2周', period: '1-2', course: '一二周课'},
     {weekday: '四', week: '3-4周', period: '3', course: '三四周课'},
@@ -77,17 +78,15 @@ void test('expands explicit row week ranges and empty week cells without importi
     semester: {startDate: '2026-09-07', fromWeek: 1, toWeek: 4, parity: 'all', periods},
   });
   assert.equal(result.errors.length, 0);
-  assert.equal(result.items.length, 12);
-  assert.equal(result.items.filter((item) => item.note === '一二周课').length, 4);
+  assert.equal(result.items.length, 10);
+  assert.equal(result.items.filter((item) => item.note === '一二周课').length, 2);
   assert.equal(result.items.filter((item) => item.note === '三四周课').length, 2);
   assert.equal(result.items.filter((item) => item.note === '单周课').length, 2);
   assert.equal(result.items.filter((item) => item.note === '每周课').length, 4);
-  assert.ok(result.items.every((item) => Date.parse(item.end) - Date.parse(item.start) === 45 * 60 * 1000));
+  assert.ok(result.items.every((item) => Date.parse(item.end) - Date.parse(item.start) === (item.sourcePeriods?.length===2?100:45) * 60 * 1000));
   assert.deepEqual(result.items.filter((item) => item.note === '一二周课').map((item) => item.start), [
     '2026-09-09T08:00:00+08:00',
-    '2026-09-09T08:55:00+08:00',
     '2026-09-16T08:00:00+08:00',
-    '2026-09-16T08:55:00+08:00',
   ]);
 });
 

@@ -7,10 +7,10 @@ void test('rolling totals clip both boundaries and retain exact minutes',()=>{
  const rows=[{start:'2026-09-22T11:30+08:00',end:'2026-09-22T12:30+08:00',categoryId:'class'},{start:'2026-09-23T11:45+08:00',end:'2026-09-23T12:30+08:00',categoryId:'class'}];
  assert.equal(categoryTotals(rows,cats,now-86400000,now)[0].value,45);
 });
-void test('attendance keeps confirmed unknown separate, excludes future and cancelled without a label',()=>{
+void test('attendance defaults ended classes to normal and excludes all cancelled courses',()=>{
  const base={start:'2026-09-23T08:00+08:00',end:'2026-09-23T08:45+08:00',categoryId:'class',status:'confirmed'};
  const values=attendanceTotals([base,{...base,status:'cancelled'},{...base,attendance:'late_under_5'},{...base,status:'cancelled',attendance:'excused'},{...base,end:'2026-09-23T18:00+08:00'}],now-86400000,now);
- assert.equal(values.reduce((s,v)=>s+v.value,0),3);assert.equal(values.find(v=>v.id==='unknown')?.value,1);assert.equal(values.find(v=>v.id==='on_time')?.value,0);assert.equal(values.find(v=>v.id==='excused')?.value,1);
+ assert.equal(values.reduce((s,v)=>s+v.value,0),2);assert.equal(values.find(v=>v.id==='unknown'),undefined);assert.equal(values.find(v=>v.id==='on_time')?.value,1);assert.equal(values.find(v=>v.id==='excused')?.value,0);
 });
 void test('weekly comparison uses Shanghai Monday boundaries and complete equal length weeks',()=>{
  assert.equal(new Date(weekStart(now)).toISOString(),'2026-09-20T16:00:00.000Z');

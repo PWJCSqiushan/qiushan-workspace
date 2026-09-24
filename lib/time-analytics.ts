@@ -8,9 +8,9 @@ export function categoryTotals(rows:readonly Interval[],categories:readonly Cate
  for(const row of rows){const minutes=Math.max(0,Math.min(Date.parse(row.end),end)-Math.max(Date.parse(row.start),start))/60000;totals.set(row.categoryId,(totals.get(row.categoryId)||0)+minutes);}
  return categories.filter(c=>c.id!=='unrecorded').map(c=>({...c,value:totals.get(c.id)||0}));
 }
-export function attendanceTotals(plans:readonly (Interval&{attendance?:string;status:string})[],start:number,end:number){
- const ended=plans.filter(p=>p.categoryId==='class'&&Date.parse(p.end)>start&&Date.parse(p.end)<=end&&(p.status!=='cancelled'||!!p.attendance));
- return [...Object.entries(ATTENDANCE_LABELS),['unknown','待标注']].map(([id,name],i)=>({id,name,color:attendanceColors[i],value:ended.filter(p=>(p.attendance||'unknown')===id).length}));
+export function attendanceTotals(plans:readonly (Interval&{attendance?:string;status:string;deliveryMode?:string})[],start:number,end:number){
+ const ended=plans.filter(p=>p.categoryId==='class'&&Date.parse(p.end)>start&&Date.parse(p.end)<=end&&p.status!=='cancelled'&&p.deliveryMode!=='online'&&Date.parse(p.end)<=Date.now());
+ return Object.entries(ATTENDANCE_LABELS).map(([id,name],i)=>({id,name,color:attendanceColors[i],value:ended.filter(p=>(p.attendance||'on_time')===id).length}));
 }
 export function weekStart(ms:number){const day=new Date(ms+8*3600000);const midnight=Date.parse(day.toISOString().slice(0,10)+'T00:00:00+08:00');return midnight-((day.getUTCDay()+6)%7)*86400000;}
 export function weeklyComparison(rows:readonly Interval[],categories:readonly Category[],now:number,weeks=4){
