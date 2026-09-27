@@ -231,9 +231,9 @@ export function FinanceOverview({
       x.includes(id) ? x.filter((i) => i !== id) : [...x, id],
     );
   const tableRow = (g: FinanceGroup, level = 1): React.ReactNode => {
-    const children = categories.filter(
-        (c) => c.parentId === g.id && (!c.archived || count(c.id) > 0),
-      ),
+    const children = categories
+        .filter((c) => c.parentId === g.id && (!c.archived || count(c.id) > 0))
+        .sort((a, b) => total(b.id) - total(a.id)),
       open =
         expanded.includes(g.id) ||
         (!!search &&

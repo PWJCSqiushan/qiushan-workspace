@@ -234,6 +234,78 @@ export class FinanceClient {
     this.countImportReviews(await this.draft());
     this.emit();
   }
+  async exportReviewBundle() {
+    if (!this.session || !this.data) throw new Error('请先连接账本');
+    if (this.pending.length)
+      throw new Error('先同步待提交修改，再导出核对草稿');
+    return {
+      kind: 'finance-review-bundle',
+      schemaVersion: 1,
+      space: this.space,
+      transactionIds: this.data.transactions.map((t) => t.id),
+      imports: await this.draft(),
+      campus: await localGet('finance/campus-drafts/' + this.prefix()),
+    };
+  }
+  async importReviewBundle(value: unknown) {
+    if (!this.session || !this.data) throw new Error('请先连接账本');
+    const bundle = value as {
+      kind?: string;
+      schemaVersion?: number;
+      space?: string;
+      transactionIds?: unknown[];
+      imports?: { kind?: string; sessions?: unknown[] };
+      campus?: unknown[];
+    };
+    if (
+      !bundle ||
+      bundle.kind !== 'finance-review-bundle' ||
+      bundle.schemaVersion !== 1 ||
+      bundle.space !== this.space ||
+      !Array.isArray(bundle.transactionIds)
+    )
+      throw new Error('核对草稿格式或账本空间不一致');
+    const ids = new Set(this.data.transactions.map((t) => t.id));
+    if (
+      bundle.transactionIds.some((id) => typeof id !== 'string' || !ids.has(id))
+    )
+      throw new Error('请先迁入对应账本流水，再导入核对草稿');
+    const validSessions = (sessions: unknown) =>
+      Array.isArray(sessions) &&
+      sessions.every((raw) => {
+        const s = raw as { rows?: { id?: unknown }[]; reviews?: unknown };
+        return (
+          s &&
+          Array.isArray(s.rows) &&
+          s.rows.every((r) => r && typeof r.id === 'string') &&
+          s.reviews &&
+          typeof s.reviews === 'object'
+        );
+      });
+    if (
+      bundle.imports &&
+      (bundle.imports.kind !== 'finance-imports' ||
+        !validSessions(bundle.imports.sessions))
+    )
+      throw new Error('账单草稿内容无效');
+    if (bundle.campus && !validSessions(bundle.campus))
+      throw new Error('饭卡草稿内容无效');
+    const copies = [
+      { key: 'finance/draft/' + this.prefix(), value: bundle.imports },
+      { key: 'finance/campus-drafts/' + this.prefix(), value: bundle.campus },
+    ].filter((item) => item.value !== undefined);
+    for (const item of copies) {
+      const current = await localGet(item.key);
+      if (current && JSON.stringify(current) !== JSON.stringify(item.value))
+        throw new Error('本机已有不同核对草稿，已保留，请勿覆盖');
+    }
+    await localPut(
+      'finance/archive/review-import/' + this.prefix() + '/' + Date.now(),
+      value,
+    );
+    for (const item of copies) await localPut(item.key, item.value);
+    await this.refreshReviewCounts();
+  }
   async copyDemoReviewDrafts() {
     if (this.space !== 'personal' || !this.session || !this.data)
       throw new Error('请先打开个人账本');

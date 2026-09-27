@@ -1,6 +1,6 @@
 'use client';
 import { categoryLabel } from '@/lib/finance-category-codes';
-import { useState, type SyntheticEvent } from 'react';
+import { useEffect, useState, type SyntheticEvent } from 'react';
 import { Plus, Download, Upload, ChevronRight } from 'lucide-react';
 import type {
   FinanceAccount,
@@ -53,11 +53,18 @@ export function FinanceAccounts({
     [editor, setEditor] = useState<Editor>(),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false),
+    [reviewDownload, setReviewDownload] = useState(''),
     [restore, setRestore] = useState<{
       file: unknown;
       count: number;
       version: number;
     }>();
+  useEffect(
+    () => () => {
+      if (reviewDownload) URL.revokeObjectURL(reviewDownload);
+    },
+    [reviewDownload],
+  );
   const balancesPending = data.accounts.some(
     (a) => !a.deleted && a.openingConfirmed === false,
   );
@@ -527,6 +534,84 @@ export function FinanceAccounts({
         <Panel title="数据与备份">
           <div className="f-backup-options">
             {' '}
+            <div>
+              <h3>迁移核对草稿</h3>
+              <p>
+                将待核对账单与饭卡截图带到另一台设备或正式站。先迁入账本流水，再导入草稿；不会覆盖已有不同草稿。
+              </p>
+              <button
+                disabled={busy}
+                onClick={() =>
+                  void run(async () => {
+                    setReviewDownload(
+                      URL.createObjectURL(
+                        new Blob(
+                          [JSON.stringify(await client.exportReviewBundle())],
+                          { type: 'application/json' },
+                        ),
+                      ),
+                    );
+                    onMessage('核对草稿已准备，请下载保存；原稿仍保留');
+                  })
+                }
+              >
+                导出核对草稿
+              </button>{' '}
+              <button
+                disabled={busy}
+                onClick={() =>
+                  void run(async () => {
+                    await navigator.clipboard.writeText(
+                      JSON.stringify(await client.exportReviewBundle()),
+                    );
+                    onMessage('核对草稿已复制');
+                  })
+                }
+              >
+                复制核对草稿
+              </button>{' '}
+              <button
+                disabled={busy}
+                onClick={() =>
+                  void run(async () => {
+                    const text = await navigator.clipboard.readText();
+                    if (text.length > 40000000)
+                      throw new Error('草稿内容超过40 MB');
+                    await client.importReviewBundle(JSON.parse(text));
+                    onMessage('核对草稿已导入本机');
+                  })
+                }
+              >
+                从剪贴板导入草稿
+              </button>{' '}
+              {reviewDownload && (
+                <a href={reviewDownload} download="finance-review-drafts.json">
+                  下载核对草稿文件
+                </a>
+              )}{' '}
+              <label className="f-file-button">
+                导入核对草稿
+                <input
+                  aria-label="导入核对草稿"
+                  disabled={busy}
+                  type="file"
+                  accept=".json"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    void run(async () => {
+                      if (file.size > 40000000)
+                        throw new Error('草稿文件超过40 MB');
+                      await client.importReviewBundle(
+                        JSON.parse(await file.text()),
+                      );
+                      onMessage('核对草稿已导入本机');
+                    });
+                    e.target.value = '';
+                  }}
+                />
+              </label>
+            </div>{' '}
             {data.space === 'personal' && (
               <div>
                 <h3>接续演示账本的核对草稿</h3>

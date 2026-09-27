@@ -284,21 +284,81 @@ void test('formal ledger review handoff preserves source, retries safely, refuse
   client.data = emptyFinanceState('promotion-test', 'personal');
   const original = globalThis.fetch;
   const transaction = { id: 'source' } as FinanceTransaction;
-  const source = { kind: 'finance-imports', sessions: [{ rows: [{ id: 'pending' }], reviews: {} }] };
-  globalThis.fetch = () => Promise.resolve(Response.json({ state: { transactions: [transaction] } }));
+  const source = {
+    kind: 'finance-imports',
+    sessions: [{ rows: [{ id: 'pending' }], reviews: {} }],
+  };
+  globalThis.fetch = () =>
+    Promise.resolve(Response.json({ state: { transactions: [transaction] } }));
   await localPut('finance/draft/promotion-test/demo', source);
   try {
-    await assert.rejects(() => client.copyDemoReviewDrafts(), /先完成演示流水迁入/);
-    assert.equal(await localGet('finance/draft/promotion-test/personal'), undefined);
+    await assert.rejects(
+      () => client.copyDemoReviewDrafts(),
+      /先完成演示流水迁入/,
+    );
+    assert.equal(
+      await localGet('finance/draft/promotion-test/personal'),
+      undefined,
+    );
     client.data.transactions = [transaction];
     await client.copyDemoReviewDrafts();
     await client.copyDemoReviewDrafts();
     assert.equal(client.reviewCount, 1);
-    assert.deepEqual(await localGet('finance/draft/promotion-test/demo'), source);
-    assert.deepEqual(await localGet('finance/draft/promotion-test/personal'), source);
+    assert.deepEqual(
+      await localGet('finance/draft/promotion-test/demo'),
+      source,
+    );
+    assert.deepEqual(
+      await localGet('finance/draft/promotion-test/personal'),
+      source,
+    );
     const existing = { kind: 'finance-imports', sessions: [] };
     await localPut('finance/draft/promotion-test/personal', existing);
-    await assert.rejects(() => client.copyDemoReviewDrafts(), /已有不同核对草稿/);
-    assert.deepEqual(await localGet('finance/draft/promotion-test/personal'), existing);
-  } finally { globalThis.fetch = original; }
+    await assert.rejects(
+      () => client.copyDemoReviewDrafts(),
+      /已有不同核对草稿/,
+    );
+    assert.deepEqual(
+      await localGet('finance/draft/promotion-test/personal'),
+      existing,
+    );
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+void test('portable review drafts keep unresolved rows across owners and reject missing records or conflicting drafts', async () => {
+  const source = new FinanceClient('personal', () => {}),
+    target = new FinanceClient('personal', () => {});
+  source.session = { owner: 'portable-source', expiresAt: Date.now() + 60000 };
+  target.session = { owner: 'portable-target', expiresAt: Date.now() + 60000 };
+  source.data = emptyFinanceState('portable-source', 'personal');
+  target.data = emptyFinanceState('portable-target', 'personal');
+  source.data.transactions = [{ id: 'migrated' } as FinanceTransaction];
+  await source.saveDraft({
+    kind: 'finance-imports',
+    sessions: [{ rows: [{ id: 'unknown' }], reviews: {} }],
+  });
+  await localPut('finance/campus-drafts/portable-source/personal', [
+    { rows: [{ id: 'meal' }], reviews: {} },
+  ]);
+  const bundle = await source.exportReviewBundle();
+  await assert.rejects(
+    () => target.importReviewBundle(bundle),
+    /先迁入对应账本流水/,
+  );
+  target.data.transactions = [{ id: 'migrated' } as FinanceTransaction];
+  await target.importReviewBundle(bundle);
+  await target.importReviewBundle(bundle);
+  assert.equal(target.reviewCount, 2);
+  assert.deepEqual(await target.draft(), await source.draft());
+  await target.saveDraft({ kind: 'finance-imports', sessions: [] });
+  await assert.rejects(
+    () => target.importReviewBundle(bundle),
+    /已有不同核对草稿/,
+  );
+  await assert.rejects(
+    () =>
+      target.importReviewBundle({ ...bundle, campus: [{ rows: 'broken' }] }),
+    /饭卡草稿内容无效/,
+  );
 });

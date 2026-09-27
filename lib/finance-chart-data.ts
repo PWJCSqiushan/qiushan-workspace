@@ -76,7 +76,12 @@ export function categoryColor(categories: FinanceCategory[], id: string) {
     0,
     siblings.findIndex((c) => c.id === id),
   );
-  return `hsl(${hue} ${path.length === 1 ? 35 : 30 + (index % 3) * 7}% ${path.length === 1 ? 62 : 48 + (index % 5) * 7}%)`;
+  // Related hues with separated tones; identity never depends on value rank.
+  const hueOffsets = [0, 14, -12, 22, -20, 8, -6, 28];
+  const tones = [42, 69, 53, 78, 35, 61, 47, 73];
+  return path.length === 1
+    ? `hsl(${hue} 35% 62%)`
+    : `hsl(${(hue + hueOffsets[index % hueOffsets.length] + 360) % 360} ${index % 2 ? 42 : 35}% ${tones[index % tones.length]}%)`;
 }
 export function categoryChartModel(data: FinanceState, stats: FinanceStats) {
   const cents = new Map<string, number>(),
@@ -130,7 +135,7 @@ export function categoryChartModel(data: FinanceState, stats: FinanceStats) {
       if (parent === 'unclassified') return [unknown];
       entries.push(unknown);
     }
-    return entries;
+    return entries.sort((a, b) => b.cents - a.cents);
   };
   return { categories, cents, counts, groups };
 }
