@@ -54,6 +54,7 @@ export function FinanceAccounts({
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false),
     [reviewDownload, setReviewDownload] = useState(''),
+    [reviewText, setReviewText] = useState(''),
     [restore, setRestore] = useState<{
       file: unknown;
       count: number;
@@ -536,6 +537,42 @@ export function FinanceAccounts({
             {' '}
             <div>
               <h3>迁移核对草稿</h3>
+              <details>
+                <summary>文本迁移（下载或剪贴板不可用时）</summary>
+                <button
+                  disabled={busy}
+                  onClick={() =>
+                    void run(async () => {
+                      setReviewText(
+                        JSON.stringify(await client.exportReviewBundle()),
+                      );
+                    })
+                  }
+                >
+                  生成草稿文本
+                </button>
+                <textarea
+                  aria-label="核对草稿文本"
+                  value={reviewText}
+                  onChange={(e) => setReviewText(e.target.value)}
+                  rows={4}
+                  spellCheck={false}
+                />
+                <button
+                  disabled={busy || !reviewText.trim()}
+                  onClick={() =>
+                    void run(async () => {
+                      if (reviewText.length > 40000000)
+                        throw new Error('草稿内容超过40 MB');
+                      await client.importReviewBundle(JSON.parse(reviewText));
+                      setReviewText('');
+                      onMessage('核对草稿已导入本机');
+                    })
+                  }
+                >
+                  导入草稿文本
+                </button>
+              </details>
               <p>
                 将待核对账单与饭卡截图带到另一台设备或正式站。先迁入账本流水，再导入草稿；不会覆盖已有不同草稿。
               </p>
