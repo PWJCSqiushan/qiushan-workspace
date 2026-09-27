@@ -1,0 +1,1101 @@
+/* Chart workspace keeps navigation fixed and long legends locally scrollable. */
+.f-content-charts {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.f-chart-page {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.f-chart-toolbar,
+.f-chart-subtoolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex: none;
+}
+.f-chart-range {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--f-muted);
+}
+.f-chart-range input {
+  max-width: 140px;
+}
+.f-chart-toolbar select,
+.f-chart-mini select,
+.f-chart-main select {
+  font-size: 12px;
+  padding: 6px 8px;
+  min-height: 32px;
+  max-width: 240px;
+}
+.f-chart-workspace {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 0.82fr) minmax(0, 1fr);
+  gap: 14px;
+}
+.f-chart-slots {
+  display: grid;
+  grid-template-rows: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  min-height: 0;
+  min-width: 0;
+}
+.f-chart-main,
+.f-chart-mini {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.f-chart-main > .f-panel-head,
+.f-chart-mini > .f-panel-head {
+  flex: none;
+  margin-bottom: 8px;
+}
+.f-chart-mini {
+  padding: 12px 16px;
+}
+.f-chart-mini > .f-panel-head {
+  min-height: 28px;
+}
+.f-chart-mini h2 {
+  font-size: 12px;
+  color: var(--f-muted);
+  font-weight: 500;
+}
+.f-category-chart {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.f-chart-breadcrumb {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  min-height: 26px;
+  flex: none;
+}
+.f-chart-breadcrumb span {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+.f-chart-breadcrumb button,
+.f-chart-foot button {
+  background: transparent;
+  border: 0;
+  padding: 3px 5px;
+  min-height: 26px;
+  font-size: 11px;
+}
+.f-chart-breadcrumb svg {
+  width: 12px;
+  height: 12px;
+  color: var(--f-muted);
+}
+.f-chart-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex: none;
+  color: var(--f-muted);
+  font-size: 10px;
+}
+.f-chart-foot button {
+  color: var(--f-accent);
+  white-space: nowrap;
+}
+.f-chart-foot svg {
+  width: 12px;
+  height: 12px;
+}
+.f-chart-foot span {
+  min-width: 0;
+}
+.f-donut-visual {
+  position: relative;
+  min-width: 0;
+  width: 100%;
+  max-width: 260px;
+  aspect-ratio: 1;
+  align-self: center;
+  justify-self: center;
+}
+.f-donut-visual svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  overflow: visible;
+}
+.f-donut-visual circle[role='button'] {
+  cursor: pointer;
+  transition: stroke-width 0.12s ease;
+}
+.f-donut-visual circle[role='button']:hover,
+.f-donut-visual circle[role='button']:focus {
+  stroke-width: 33px;
+  outline: none;
+  filter: brightness(1.1);
+}
+.f-donut-center {
+  position: absolute;
+  inset: 30%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  pointer-events: none;
+  text-align: center;
+}
+.f-donut-center strong {
+  font-size: clamp(16px, 1.8vw, 32px);
+  letter-spacing: -0.06em;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.f-donut-center small {
+  color: var(--f-muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.f-ring-wrap {
+  display: grid;
+  grid-template-columns: minmax(100px, 0.9fr) minmax(0, 1.1fr);
+  gap: 14px;
+  min-height: 0;
+}
+.f-ring-legend {
+  min-height: 0;
+  overflow: auto;
+  padding-right: 3px;
+  scrollbar-width: thin;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+}
+.f-ring-legend button {
+  flex: none;
+  display: grid;
+  grid-template-columns: 7px minmax(0, 1fr) auto;
+  width: 100%;
+  gap: 8px;
+  align-items: center;
+  padding: 5px 2px;
+  min-height: 34px;
+  border: 0;
+  background: none;
+  border-radius: 4px;
+  text-align: left;
+  opacity: 1;
+}
+.f-ring-legend button:hover:not(:disabled) {
+  background: var(--f-soft);
+}
+.f-ring-legend button:disabled {
+  opacity: 1;
+  cursor: default;
+}
+.f-ring-legend button span {
+  min-width: 0;
+  font-size: 12px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.f-ring-legend button small {
+  display: block;
+  color: var(--f-muted);
+  font-size: 10px;
+  font-weight: 400;
+}
+.f-ring-legend button b {
+  font-size: 11px;
+  font-weight: 550;
+  font-variant-numeric: tabular-nums;
+}
+.f-ring-legend button i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+.f-chart-main .f-ring-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.f-chart-main .f-donut-visual {
+  width: min(100%, 34vh);
+  flex-shrink: 1;
+  min-height: 100px;
+}
+.f-chart-main .f-ring-legend {
+  width: 100%;
+  flex: 1;
+}
+.f-chart-main .f-ring-legend button {
+  min-height: 38px;
+}
+.f-chart-main .f-ring-legend button span small {
+  display: inline;
+  margin-left: 10px;
+}
+.f-chart-mini .f-ring-wrap {
+  flex: 1;
+  grid-template-columns: minmax(78px, 0.62fr) minmax(0, 1.38fr);
+  gap: 12px;
+}
+.f-chart-mini .f-donut-visual {
+  max-height: 100%;
+  height: 100%;
+  width: auto;
+  max-width: 160px;
+}
+.f-chart-mini .f-donut-center strong {
+  font-size: 17px;
+}
+.f-chart-mini .f-ring-legend button {
+  min-height: 32px;
+  padding: 2px;
+}
+.f-chart-mini .f-ring-legend button small {
+  display: inline;
+  margin-left: 8px;
+}
+.f-chart-mini .f-ring-legend button span {
+  font-size: 11px;
+}
+.f-chart-mini .f-chart-breadcrumb {
+  min-height: 20px;
+}
+.f-chart-mini .f-chart-breadcrumb button {
+  min-height: 20px;
+  padding-block: 0;
+}
+.f-chart-mini .f-chart-foot {
+  min-height: 20px;
+}
+.f-meal-chart-controls {
+  display: flex;
+  gap: 6px;
+}
+.f-chart-subtoolbar {
+  justify-content: flex-start;
+}
+.f-chart-subtoolbar small {
+  color: var(--f-muted);
+  font-size: 11px;
+}
+.f-trend-layout {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.f-trend-daily,
+.f-trend-monthly,
+.f-trend-calendar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.f-trend-calendar {
+  grid-column: 2;
+  grid-row: 1 / 3;
+}
+.f-chart-series {
+  position: relative;
+  flex: 1;
+  display: flex;
+  min-height: 70px;
+  padding-bottom: 25px;
+  gap: 8px;
+}
+.f-series-scale {
+  width: 58px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  color: var(--f-muted);
+  font-size: 10px;
+}
+.f-series-plot {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-end;
+  position: relative;
+  gap: 3px;
+  border-bottom: 1px solid var(--f-line);
+  background: repeating-linear-gradient(
+    to top,
+    transparent 0,
+    transparent calc(25% - 1px),
+    var(--f-line) 25%
+  );
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 24px;
+  margin-bottom: -24px;
+}
+.f-series-inner > button {
+  position: relative;
+  padding: 0;
+  height: calc(100% - 24px);
+  min-width: 4px;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.f-series-column {
+  width: min(100%, 40px);
+  display: block;
+  background: var(--f-accent);
+  opacity: 0.75;
+  border-radius: 3px 3px 0 0;
+}
+.f-series-plot button:hover .f-series-column {
+  opacity: 1;
+}
+.f-series-plot button small {
+  position: absolute;
+  top: calc(100% + 7px);
+  font-size: 9px;
+  color: var(--f-muted);
+  white-space: nowrap;
+}
+.f-series-plot svg {
+  position: absolute;
+  width: 100%;
+  height: calc(100% - 24px);
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+.is-line .f-series-column {
+  opacity: 0.06;
+}
+.is-line .f-series-plot button i {
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  background: var(--f-accent);
+  border-radius: 50%;
+}
+.f-heat-months {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+  scrollbar-width: thin;
+}
+.f-heat-months section + section {
+  margin-top: 20px;
+}
+.f-heat-months h3 {
+  font-size: 12px;
+  margin: 0 0 10px;
+}
+.f-heat-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 5px;
+}
+.f-heat-grid > small {
+  text-align: center;
+  font-size: 10px;
+  color: var(--f-muted);
+}
+.f-heat-grid button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 1px;
+  min-height: 46px;
+  border: 1px solid var(--f-line);
+  gap: 0;
+  background: var(--f-soft);
+}
+.f-heat-grid button b {
+  font-size: 12px;
+  font-weight: 550;
+}
+.f-heat-grid button small {
+  font-size: 9px;
+}
+.f-heat-grid button:not(.is-recorded) {
+  color: var(--f-muted);
+  border-style: dashed;
+}
+.f-day-total {
+  font-size: 32px;
+  letter-spacing: -0.04em;
+}
+.f-day-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--f-line);
+}
+.f-day-row span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.f-day-row b {
+  flex: none;
+}
+.f-meal-calendar-visual {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--f-line);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--f-panel);
+}
+.f-meal-calendar-head,
+.f-meal-calendar-row {
+  display: grid;
+  grid-template-columns: 70px repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px 14px;
+}
+.f-meal-calendar-head {
+  background: var(--f-soft);
+  font-size: 12px;
+}
+.f-meal-calendar-scroll {
+  overflow: auto;
+  min-height: 0;
+}
+.f-meal-calendar-row {
+  border-top: 1px solid var(--f-line);
+  align-items: center;
+}
+.f-meal-calendar-row > b {
+  color: var(--f-muted);
+  font-size: 12px;
+}
+.f-meal-calendar-row > div {
+  color: var(--f-muted);
+  font-size: 11px;
+  padding: 8px;
+}
+.f-meal-calendar-row > div.has-meal {
+  color: var(--f-ink);
+  background: var(--f-accent-soft);
+  border-radius: 5px;
+}
+.f-meal-calendar-row small {
+  display: block;
+  color: var(--f-muted);
+  font-size: 10px;
+}
+.f-row-drill {
+  opacity: 0.45;
+}
+.f-category-row:hover .f-row-drill {
+  opacity: 1;
+}
+.f-label-mode {
+  max-width: 115px;
+  font-size: 12px !important;
+}
+.f-side-stack .f-category-chart {
+  min-height: 200px;
+}
+.f-side-stack .f-category-chart .f-ring-wrap {
+  flex: 1;
+  max-height: 270px;
+}
+@media (min-width: 1500px) and (min-height: 900px) {
+  .f-chart-main .f-donut-visual {
+    width: min(100%, 37vh);
+  }
+  .f-chart-mini .f-donut-visual {
+    max-width: 205px;
+  }
+  .f-chart-mini .f-ring-legend button {
+    min-height: 38px;
+  }
+}
+@media (max-width: 1200px) {
+  .f-chart-toolbar {
+    gap: 6px;
+  }
+  .f-chart-workspace {
+    gap: 10px;
+    grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr);
+  }
+  .f-chart-mini {
+    padding: 10px;
+  }
+  .f-chart-mini > .f-panel-head {
+    flex-wrap: nowrap;
+  }
+  .f-chart-mini select {
+    max-width: 225px;
+    font-size: 11px;
+  }
+  .f-chart-mini h2 {
+    display: none;
+  }
+  .f-chart-range span {
+    font-size: 10px;
+  }
+  .f-chart-main {
+    padding: 14px;
+  }
+  .f-chart-main .f-donut-visual {
+    width: min(100%, 29vh);
+  }
+  .f-chart-mini .f-chart-foot {
+    font-size: 9px;
+  }
+  .f-chart-mini .f-ring-legend button small {
+    display: block;
+    margin-left: 0;
+  }
+  .f-page-actions {
+    gap: 5px;
+  }
+  .f-page-actions > button {
+    padding-inline: 8px;
+  }
+  .f-label-mode {
+    max-width: 100px;
+  }
+}
+@media (max-width: 767px), (orientation: portrait) and (max-width: 1000px) {
+  .f-content-charts {
+    overflow: auto;
+  }
+  .f-chart-page {
+    min-height: auto;
+    flex: none;
+  }
+  .f-chart-toolbar {
+    flex-wrap: wrap;
+  }
+  .f-chart-workspace {
+    display: flex;
+    flex-direction: column;
+    flex: none;
+  }
+  .f-chart-main {
+    min-height: 450px;
+  }
+  .f-chart-slots {
+    display: flex;
+    flex-direction: column;
+  }
+  .f-chart-mini {
+    height: 230px;
+    flex: none;
+  }
+  .f-chart-main .f-ring-legend {
+    max-height: 260px;
+  }
+  .f-trend-layout {
+    display: flex;
+    flex-direction: column;
+    flex: none;
+  }
+  .f-trend-daily,
+  .f-trend-monthly {
+    height: 250px;
+  }
+  .f-trend-calendar {
+    height: 480px;
+  }
+  .f-chart-range {
+    flex-wrap: wrap;
+  }
+  .f-chart-subtoolbar {
+    flex-wrap: wrap;
+  }
+  .f-meal-calendar-visual {
+    min-height: 500px;
+    max-height: 75vh;
+    flex: none;
+  }
+  .f-meal-calendar-row,
+  .f-meal-calendar-head {
+    grid-template-columns: 40px repeat(3, minmax(0, 1fr));
+    padding-inline: 6px;
+    gap: 4px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .f-donut-visual circle {
+    transition: none;
+  }
+}
+.f-campus-entry {
+  margin: 8px 0 16px;
+  background: var(--f-accent-soft) !important;
+  color: var(--f-accent) !important;
+}
+.f-campus-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+.f-campus-toolbar {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.f-campus-toolbar .f-field {
+  margin: 0;
+}
+.f-campus-toolbar input[type='number'] {
+  width: 88px;
+}
+.f-campus-toolbar .f-check {
+  margin-bottom: 10px;
+}
+.f-campus-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 15px;
+  padding: 10px 12px;
+  background: var(--f-accent-soft);
+  border-radius: 8px;
+  font-size: 12px;
+}
+.f-campus-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 18px;
+  min-height: 300px;
+  height: min(56vh, 650px);
+}
+.f-campus-rows,
+.f-campus-editor {
+  min-height: 0;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+.f-campus-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  border-bottom: 1px solid var(--f-line);
+  padding: 5px 8px;
+}
+.f-campus-row.is-selected {
+  background: var(--f-accent-soft);
+  border-radius: 6px;
+}
+.f-campus-row button {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  justify-content: space-between;
+  text-align: left;
+  padding: 7px 0;
+  border: 0;
+  background: none;
+}
+.f-campus-row button span {
+  flex: 1;
+  min-width: 0;
+}
+.f-campus-row b {
+  font-size: 12px;
+  font-weight: 550;
+  display: block;
+  overflow-wrap: anywhere;
+}
+.f-campus-row small {
+  display: block;
+  font-size: 10px;
+  color: var(--f-muted);
+}
+.f-campus-row strong {
+  font-size: 13px;
+  flex: none;
+}
+.f-campus-source {
+  white-space: pre-wrap;
+  font: inherit;
+  font-size: 11px;
+  background: var(--f-soft);
+  border: 1px solid var(--f-line);
+  padding: 10px;
+  border-radius: 6px;
+}
+.f-campus-fragment {
+  width: 100%;
+  max-height: 130px;
+  object-fit: contain;
+  background: #fff;
+  border: 1px solid var(--f-line);
+  border-radius: 6px;
+  margin: 8px 0;
+}
+.f-campus-original {
+  max-height: 250px;
+  overflow: auto;
+}
+.f-campus-original img {
+  width: 100%;
+  height: auto;
+}
+.f-campus-editor details {
+  font-size: 11px;
+  margin: 8px 0;
+  color: var(--f-muted);
+}
+.f-campus-editor fieldset {
+  border: 0;
+  padding: 0;
+  margin: 12px 0;
+  min-width: 0;
+}
+.f-campus-editor fieldset legend {
+  color: var(--f-muted);
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+.f-campus-editor .f-form-grid {
+  margin-top: 10px;
+}
+@media (max-width: 767px) {
+  .f-campus-grid {
+    display: flex;
+    flex-direction: column;
+    height: auto;
+  }
+  .f-campus-rows {
+    max-height: 240px;
+  }
+  .f-campus-editor {
+    overflow: visible;
+  }
+}
+
+.f-series-inner {
+  display: flex;
+  position: relative;
+  gap: 3px;
+  width: 100%;
+  height: 100%;
+  padding-bottom: 24px;
+  box-sizing: border-box;
+  align-items: flex-end;
+}
+.f-series-inner > button {
+  height: 100%;
+}
+.f-series-inner svg {
+  height: calc(100% - 24px);
+}
+/* Size rings from the available chart cell, never from intrinsic SVG height. */
+.finance-app .f-ring-legend {
+  max-width: none;
+  gap: 2px;
+}
+.finance-app .f-ring-legend button {
+  display: grid;
+  grid-template-columns: 7px minmax(0, 1fr) auto;
+  gap: 8px;
+  min-height: 32px;
+  padding: 4px 2px;
+}
+.f-chart-main .f-ring-wrap {
+  align-items: stretch;
+  justify-content: flex-start;
+  padding: 0;
+}
+.f-chart-mini .f-category-chart {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+.f-chart-mini .f-ring-wrap {
+  container-type: size;
+  display: grid;
+  grid-template-columns: minmax(66px, 0.55fr) minmax(0, 1.45fr);
+  grid-template-rows: minmax(0, 1fr);
+  padding: 0;
+  align-items: stretch;
+  overflow: hidden;
+}
+.f-chart-mini .f-donut-visual {
+  width: min(30cqw, 100cqh, 160px);
+  height: min(30cqw, 100cqh, 160px);
+  min-height: 0;
+  max-width: none;
+}
+.f-chart-mini .f-donut-center strong {
+  font-size: clamp(9px, 14cqh, 17px);
+}
+.f-chart-mini .f-donut-center small {
+  display: none;
+}
+.f-chart-mini .f-ring-legend {
+  height: 100%;
+}
+.f-chart-mini .f-chart-foot {
+  font-size: 9px;
+}
+.f-chart-mini .f-chart-foot button {
+  font-size: 10px;
+  min-height: 20px;
+  padding-block: 0;
+}
+.f-chart-mini .f-category-chart {
+  display: flex;
+  position: relative;
+  gap: 2px;
+}
+.f-chart-mini .f-chart-breadcrumb {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  z-index: 1;
+  max-width: 65%;
+}
+.f-chart-mini .f-chart-breadcrumb span {
+  display: none;
+}
+.f-chart-mini .f-chart-foot {
+  justify-content: flex-end;
+  min-height: 20px;
+}
+.f-chart-mini .f-chart-foot > span {
+  display: none;
+}
+.finance-app .f-chart-mini .f-ring-legend button {
+  min-height: 27px;
+  padding: 2px;
+}
+.f-chart-mini .f-ring-wrap {
+  grid-template-columns: minmax(85px, 0.55fr) minmax(0, 1.45fr);
+}
+@media (min-width: 768px) {
+  .f-dialog:has(.f-campus-body) {
+    width: min(1120px, 96vw);
+  }
+  .f-campus-body {
+    overflow: hidden !important;
+  }
+  .f-campus-grid {
+    flex: 1;
+    min-height: 0;
+    height: auto;
+  }
+  .f-campus-toolbar {
+    gap: 8px;
+  }
+  .f-campus-toolbar .f-field {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .f-campus-toolbar .f-check {
+    margin-bottom: 0;
+  }
+  .f-campus-body > .f-text {
+    align-self: flex-start;
+    padding: 2px;
+    min-height: 22px;
+  }
+  .f-campus-summary {
+    padding: 5px 10px;
+  }
+  .f-campus-editor .f-field {
+    margin-bottom: 9px;
+  }
+}
+
+/* Finance display typography: Smiley Sans Chinese, Geist Latin and amounts. */
+.finance-app {
+  --f-display: 'Geist', 'Qiushan Finance Display', 'Qiushan Han', sans-serif;
+}
+.finance-app
+  :is(.f-chart-page, .f-category-chart, .f-category-row, .f-category-head) {
+  font-family: var(--f-display);
+}
+.finance-app
+  :is(.f-chart-page, .f-category-chart)
+  :is(button, select, input, h2, h3),
+.finance-app .f-category-row > div {
+  font-family: var(--f-display);
+  font-weight: 400;
+}
+.finance-app .f-chart-page .f-panel-head h2 {
+  font-size: 19px;
+  color: var(--f-ink);
+}
+.finance-app .f-chart-toolbar :is(button, select),
+.finance-app .f-chart-subtoolbar button {
+  font-size: 16px;
+}
+.finance-app :is(.f-chart-mini, .f-chart-main) select {
+  font-size: 16px;
+  min-height: 36px;
+  max-width: 310px;
+}
+.finance-app .f-chart-mini h2 {
+  font-size: 16px;
+  white-space: nowrap;
+}
+.finance-app .f-chart-range {
+  font-size: 14px;
+}
+.finance-app .f-chart-breadcrumb button {
+  font-size: 15px;
+  min-height: 28px;
+}
+.finance-app .f-chart-foot,
+.finance-app .f-chart-foot button {
+  font-size: 13px;
+}
+.finance-app .f-ring-legend button span {
+  font-size: 17px;
+  line-height: 1.35;
+}
+.finance-app .f-ring-legend button small {
+  font-family: var(--qs-font);
+  font-size: 13px;
+}
+.finance-app .f-ring-legend button b {
+  font-family: var(--qs-font);
+  font-size: 15px;
+  font-weight: 550;
+}
+.finance-app .f-ring-legend button {
+  min-height: 42px;
+  padding-block: 6px;
+}
+.finance-app .f-chart-mini .f-ring-legend button {
+  min-height: 36px;
+  padding-block: 4px;
+}
+.finance-app .f-chart-mini .f-ring-legend button span {
+  font-size: 16px;
+}
+.finance-app .f-donut-center strong {
+  font-family: 'Geist', sans-serif;
+  font-weight: 550;
+  letter-spacing: -0.035em;
+}
+.finance-app .f-donut-center small {
+  font-size: 13px;
+}
+.finance-app .f-chart-mini .f-donut-center strong {
+  font-size: clamp(14px, 16cqh, 22px);
+}
+.finance-app .f-chart-mini .f-chart-foot {
+  min-height: 28px;
+}
+.finance-app .f-chart-mini .f-chart-breadcrumb button {
+  font-size: 13px;
+}
+.finance-app .f-chart-mini .f-chart-foot button {
+  font-size: 13px;
+}
+.finance-app
+  :is(.f-series-scale, .f-series-plot button small, .f-heat-grid > small) {
+  font-size: 12px;
+}
+.finance-app .f-heat-months h3 {
+  font-size: 17px;
+}
+.finance-app .f-heat-grid button b {
+  font-size: 15px;
+}
+.finance-app .f-heat-grid button small {
+  font-size: 11px;
+}
+.finance-app .f-meal-calendar-head {
+  font-size: 17px;
+}
+.finance-app .f-meal-calendar-row > div {
+  font-size: 16px;
+}
+.finance-app .f-meal-calendar-row small {
+  font-size: 13px;
+}
+.finance-app .f-category-row > div {
+  font-size: 16px;
+}
+@media (max-width: 1200px) {
+  .finance-app .f-chart-toolbar {
+    flex-wrap: wrap;
+  }
+  .finance-app .f-chart-mini select {
+    max-width: 100%;
+    font-size: 15px;
+  }
+  .finance-app .f-chart-range span {
+    font-size: 13px;
+  }
+  .finance-app .f-chart-mini .f-ring-legend button span {
+    font-size: 15px;
+  }
+  .finance-app .f-chart-mini .f-ring-legend button b {
+    font-size: 14px;
+  }
+}
+@media (min-width: 1500px) and (min-height: 900px) {
+  .finance-app .f-chart-page .f-panel-head h2 {
+    font-size: 22px;
+  }
+  .finance-app .f-chart-mini h2 {
+    font-size: 20px;
+  }
+  .finance-app .f-chart-mini select {
+    font-size: 18px;
+  }
+  .finance-app .f-ring-legend button span {
+    font-size: 20px;
+  }
+  .finance-app .f-chart-mini .f-ring-legend button span {
+    font-size: 18px;
+  }
+  .finance-app .f-ring-legend button small {
+    font-size: 15px;
+  }
+  .finance-app .f-ring-legend button b {
+    font-size: 17px;
+  }
+  .finance-app .f-chart-main .f-donut-visual {
+    max-width: 330px;
+  }
+  .finance-app .f-donut-center strong {
+    font-size: 36px;
+  }
+  .finance-app .f-chart-mini .f-donut-center strong {
+    font-size: clamp(16px, 16cqh, 24px);
+  }
+}

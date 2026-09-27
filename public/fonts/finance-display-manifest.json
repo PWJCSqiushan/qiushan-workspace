@@ -1,0 +1,175 @@
+{
+  "sourceSha256": "b447d7e781f08bc95c4c9f23ba71ed2b8ebb639aa7184485c71c4ca5afcd25c4",
+  "files": [
+    {
+      "file": "finance-display-00.woff2",
+      "bytes": 110612,
+      "sha256": "899f13ff38fd868a08c2193d3cc2cc91417e8867ed820298f3dda0698bd34c6b"
+    },
+    {
+      "file": "finance-display-01.woff2",
+      "bytes": 10996,
+      "sha256": "104ad96fefe6f23803aaf4d0c691fa062e85fe53d615fb900a5b7bf2444b11a0"
+    },
+    {
+      "file": "finance-display-02.woff2",
+      "bytes": 11040,
+      "sha256": "c1fc4db658d20b477f8e041c47116954d32bedb1fba0ccb33554fd8471369bc0"
+    },
+    {
+      "file": "finance-display-03.woff2",
+      "bytes": 23124,
+      "sha256": "d98da1702651473d26b090d03c4896941887a45cc74dfc074700bdcc2672b093"
+    },
+    {
+      "file": "finance-display-04.woff2",
+      "bytes": 31464,
+      "sha256": "0665b33e3a7f0ffbca82d98d2ed60eb2b438ea6f4fd1dc454c353c241176e10b"
+    },
+    {
+      "file": "finance-display-05.woff2",
+      "bytes": 36912,
+      "sha256": "754a556f531415d93837b232c770efc9b310c40113fdc01064143aebf2eeeec6"
+    },
+    {
+      "file": "finance-display-06.woff2",
+      "bytes": 30684,
+      "sha256": "d66e50350d228e749ea5b30bc89a74b267314ffd709eceb77a3f846fcc3d0699"
+    },
+    {
+      "file": "finance-display-07.woff2",
+      "bytes": 38224,
+      "sha256": "f7ceb3bb222c221b9b221f97ec0416d5065852b9e556f56cba10a8579497913b"
+    },
+    {
+      "file": "finance-display-08.woff2",
+      "bytes": 39732,
+      "sha256": "ddc4a935ec0d8999880133ae0558ea7a342b352ba964fa7a49a5caec50aff82e"
+    },
+    {
+      "file": "finance-display-09.woff2",
+      "bytes": 37744,
+      "sha256": "1d0f84014fdbe5c2db8ff4b10a53f3e52806e1b2c77c12870acdb5bc994c5951"
+    },
+    {
+      "file": "finance-display-10.woff2",
+      "bytes": 36688,
+      "sha256": "8655f467ee2712b26f42372269574d68af04a29e1f5d5c5fe3fae14c4bac6b18"
+    },
+    {
+      "file": "finance-display-11.woff2",
+      "bytes": 40020,
+      "sha256": "d306ec47ce50cafdfe5d6cdd23433360aaab5780b15f88088357fc9f7e5a79cf"
+    },
+    {
+      "file": "finance-display-12.woff2",
+      "bytes": 43760,
+      "sha256": "aae5b9b2118d9b6fc162960470681347014e8d875aacc66df47d785eb0462474"
+    },
+    {
+      "file": "finance-display-13.woff2",
+      "bytes": 33476,
+      "sha256": "d29ce2389f45d36c1149e5fb2343fd8af1d95e613016ab695baa21eeb2cff125"
+    },
+    {
+      "file": "finance-display-14.woff2",
+      "bytes": 42760,
+      "sha256": "6cf0e47e2fe25f4d73fcb4336b46e6411c218cc3f77f6bdc5dda513d6aa7fd43"
+    },
+    {
+      "file": "finance-display-15.woff2",
+      "bytes": 35124,
+      "sha256": "b0dd5ed4ae4e77b5105db2a1e7219c94a353e20114e3b90384bdae95fc62cb32"
+    },
+    {
+      "file": "finance-display-16.woff2",
+      "bytes": 47072,
+      "sha256": "348f94f55b49334bc964f9276d94bfe173dff86354aaee97686c449051ba2d6c"
+    },
+    {
+      "file": "finance-display-17.woff2",
+      "bytes": 41760,
+      "sha256": "3543ab02f3234d7addc032dbd91c0e7398e3b6000be40a2373325bbe24ee92e1"
+    },
+    {
+      "file": "finance-display-18.woff2",
+      "bytes": 39952,
+      "sha256": "a7c85d4fffaeb457c42b8f87261e913b7171f03dd1f8631098f653f9cb4383a1"
+    },
+    {
+      "file": "finance-display-19.woff2",
+      "bytes": 37952,
+      "sha256": "d0f0907224d0c78706fb61e03f8931d5019e64319fff6cd4e893f3148a707832"
+    },
+    {
+      "file": "finance-display-20.woff2",
+      "bytes": 39856,
+      "sha256": "43ffde8d4b7096e2f524e85fc62732d3261050367f4fc4d59e47e9415ecf8b51"
+    },
+    {
+      "file": "finance-display-21.woff2",
+      "bytes": 43904,
+      "sha256": "bc0d7cdf8486da1ecc8cbc4fa8cbf12856114e1a996046a0222fb4bdcef0ca2f"
+    },
+    {
+      "file": "finance-display-22.woff2",
+      "bytes": 41948,
+      "sha256": "fb61fbb5c3bccc017745ac0647d22f099bdcea0d19487434d7bcdebb4baa6347"
+    },
+    {
+      "file": "finance-display-23.woff2",
+      "bytes": 36284,
+      "sha256": "d7d42e08762f3034c114e329a519bd04a7293480760b67d6b9174e9e91e584f6"
+    },
+    {
+      "file": "finance-display-24.woff2",
+      "bytes": 40672,
+      "sha256": "6632c47db7b794c72b672edbfbb3dbac8e58e2c5c4a74014ebbefb973a3804b0"
+    },
+    {
+      "file": "finance-display-25.woff2",
+      "bytes": 43348,
+      "sha256": "61e4d05db7f1a26bcef0e35a1766a052a2a4383db8a098ee96b00ea360105e81"
+    },
+    {
+      "file": "finance-display-26.woff2",
+      "bytes": 42736,
+      "sha256": "408f2a827b21fe79a67d5310ec11bdd526afc17bf1fd65bcd1b0d98c70e2a8e8"
+    },
+    {
+      "file": "finance-display-27.woff2",
+      "bytes": 42072,
+      "sha256": "6c0c64b2625da5db60706ce281ad560e680db1f945b5af61fb9f1563b359438f"
+    },
+    {
+      "file": "finance-display-28.woff2",
+      "bytes": 39196,
+      "sha256": "835c3f346be85c9817dcccf0cff5e0dc9451e042853b759d57b45f04b4761045"
+    },
+    {
+      "file": "finance-display-29.woff2",
+      "bytes": 39888,
+      "sha256": "c9a4c06dcc859880f2adb43b33d56e876348cccd7f6755b4c4c8f2d4f1319f12"
+    },
+    {
+      "file": "finance-display-30.woff2",
+      "bytes": 41940,
+      "sha256": "74ce7221e6780efaa74936a752cf339b8e99aa2c9d7103e9fc4eb9dfc1ad614d"
+    },
+    {
+      "file": "finance-display-31.woff2",
+      "bytes": 47352,
+      "sha256": "116cec3c0e1e11bb6afbf1fdf556a41bd448e5845be8d23f38f7c41b32ca95e9"
+    },
+    {
+      "file": "finance-display-32.woff2",
+      "bytes": 28484,
+      "sha256": "bc84d8a15700d5bf3e4492d1a09c0816bebc8bbd6c501b14d033c19fc6459957"
+    },
+    {
+      "file": "finance-display-33.woff2",
+      "bytes": 32244,
+      "sha256": "ecd178642e7bdad4f2822f13d3a159deb86800865ca42b4cdc618037e89889af"
+    }
+  ]
+}

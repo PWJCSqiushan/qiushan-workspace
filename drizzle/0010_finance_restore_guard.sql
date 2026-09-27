@@ -1,0 +1,1 @@
+ALTER TABLE finance_heads ADD COLUMN restore_version INTEGER NOT NULL DEFAULT 0;

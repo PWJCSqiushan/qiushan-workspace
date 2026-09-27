@@ -1,0 +1,304 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import 'fake-indexeddb/auto';
+import { localGet, localPut } from '../lib/device-db.ts';
+import { FinanceClient } from '../lib/finance-client.ts';
+import { FinanceStore } from '../lib/finance-store.ts';
+import { database } from './d1-helper.ts';
+import { handleFinanceRequest, financeFailure } from '../lib/finance-api.ts';
+import { emptyFinanceState } from '../lib/finance-types.ts';
+import type { FinanceTransaction } from '../lib/finance-types.ts';
+
+void test('finance outbox keeps stable IDs after lost responses, serializes offline edits, and retains genuine conflicts', async () => {
+  const { db, sqlite } = database(),
+    store = new FinanceStore(db, 'client-test'),
+    originalFetch = globalThis.fetch;
+  let offline = false,
+    loseReceipt = false,
+    wrongReceipt = false;
+  const operationIds: string[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (offline) throw new TypeError('network unavailable');
+    const path =
+      typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.href
+          : input.url;
+    if (path === '/api/session')
+      return Response.json({
+        owner: 'client-test',
+        expiresAt: Date.now() + 3600000,
+      });
+    if (init?.body && path.includes('mutations'))
+      operationIds.push(
+        JSON.parse(typeof init.body === 'string' ? init.body : '').operationId,
+      );
+    let response: Response;
+    try {
+      response = await handleFinanceRequest(
+        new Request('http://local' + path, init),
+        store,
+      );
+    } catch (e) {
+      response = financeFailure(e);
+    }
+    if (path.includes('mutations') && loseReceipt) {
+      loseReceipt = false;
+      throw new TypeError('response lost');
+    }
+    if (path.includes('mutations') && wrongReceipt) {
+      const body = (await response.json()) as Record<string, unknown>;
+      return Response.json({ ...body, operationId: 'different' });
+    }
+    return response;
+  }) as typeof fetch;
+  const client = new FinanceClient('demo', () => {});
+  try {
+    await client.start();
+    await client.enqueue({
+      type: 'put',
+      collection: 'accounts',
+      entity: {
+        id: 'bank',
+        version: 0,
+        name: '合成账户',
+        kind: 'asset',
+        openingCents: 100000,
+        openingAt: '2026-01-01T00:00:00Z',
+      },
+      expectedVersion: 0,
+    });
+    const expense = (id: string, version = 0): FinanceTransaction => ({
+      id,
+      version,
+      kind: 'expense',
+      accountId: 'bank',
+      occurredAt: '2026-09-01T00:00:00Z',
+      amountCents: 1000,
+      personalCents: 1000,
+      allocations: [
+        {
+          id: id + '_a',
+          categoryId: null,
+          content: '其他',
+          amountCents: 1000,
+          nature: 'daily',
+        },
+      ],
+    });
+    offline = true;
+    await client.enqueue({
+      type: 'saveTransaction',
+      transaction: expense('one'),
+      expectedVersion: 0,
+    });
+    await client.enqueue({
+      type: 'saveTransaction',
+      transaction: expense('two'),
+      expectedVersion: 0,
+    });
+    assert.equal(client.pending.length, 2);
+    assert.equal(client.data!.transactions.length, 2);
+    assert.equal((await store.snapshot('demo')).transactions.length, 0);
+    offline = false;
+    loseReceipt = true;
+    await client.sync();
+    assert.equal(client.pending.length, 2);
+    await client.sync();
+    assert.equal(client.pending.length, 0);
+    assert.equal(operationIds[1], operationIds[2]);
+    assert.equal((await store.snapshot('demo')).transactions.length, 2);
+    offline = true;
+    await client.enqueue({
+      type: 'saveTransaction',
+      transaction: { ...expense('one', 1), note: 'local draft' },
+      expectedVersion: 1,
+    });
+    await store.mutate({
+      space: 'demo',
+      operationId: 'other-device',
+      baseVersion: 0,
+      mutation: {
+        type: 'saveTransaction',
+        transaction: { ...expense('one', 1), note: 'remote version' },
+        expectedVersion: 1,
+      },
+    });
+    offline = false;
+    await client.sync();
+    assert.equal(client.pending[0].state, 'conflict');
+    assert.equal(
+      (await store.snapshot('demo')).transactions.find((t) => t.id === 'one')!
+        .note,
+      'remote version',
+    );
+    await client.resolve(client.pending[0].operationId, false);
+    assert.equal(client.pending.length, 0);
+    wrongReceipt = true;
+    await client.enqueue({
+      type: 'saveTransaction',
+      transaction: expense('three'),
+      expectedVersion: 0,
+    });
+    assert.equal(client.pending.length, 1);
+    assert.match(client.pending[0].error!, /回执/);
+    wrongReceipt = false;
+    await client.sync();
+    assert.equal(client.pending.length, 0);
+    assert.equal((await store.snapshot('demo')).transactions.length, 3);
+  } finally {
+    client.stop();
+    globalThis.fetch = originalFetch;
+    sqlite.close();
+  }
+});
+void test('fresh offline launch does not infer a signed-in owner from another cached session', async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    throw new TypeError('offline');
+  }) as typeof fetch;
+  const client = new FinanceClient('demo', () => {});
+  try {
+    await client.start();
+    assert.equal(client.data, null);
+    assert.equal(client.blocked, true);
+    assert.match(client.message, /身份/);
+  } finally {
+    client.stop();
+    globalThis.fetch = original;
+  }
+});
+
+void test('interrupted delta pagination never exposes or caches a partial ledger', async () => {
+  const original = globalThis.fetch;
+  let failSecond = true;
+  const cursors: number[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const path =
+      typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.href
+          : input.url;
+    if (path === '/api/session')
+      return Response.json({
+        owner: 'pagination-test',
+        expiresAt: Date.now() + 10000,
+      });
+    const cursor = Number(
+      new URL('http://local' + path).searchParams.get('cursor'),
+    );
+    cursors.push(cursor);
+    if (cursor === 200 && failSecond) throw new TypeError('lost second page');
+    const changes = Array.from({ length: cursor === 0 ? 200 : 1 }, (_, i) => ({
+      collection: 'accounts',
+      id: 'account' + (cursor + i),
+      value: {
+        id: 'account' + (cursor + i),
+        version: 1,
+        name: '合成账户',
+        kind: 'asset',
+        openingCents: 0,
+        openingAt: '2026-01-01T00:00:00Z',
+      },
+    }));
+    return Response.json({
+      owner: 'pagination-test',
+      space: 'demo',
+      version: 1,
+      cursor: cursor === 0 ? 200 : 201,
+      hasMore: cursor === 0,
+      changes,
+      history: [],
+    });
+  }) as typeof fetch;
+  const client = new FinanceClient('demo', () => {});
+  try {
+    await client.start();
+    assert.equal(client.data!.accounts.length, 0);
+    failSecond = false;
+    await client.sync();
+    assert.equal(client.data!.accounts.length, 201);
+    assert.deepEqual(cursors, [0, 200, 0, 200]);
+  } finally {
+    client.stop();
+    globalThis.fetch = original;
+  }
+});
+
+void test('import review count tracks unresolved rows independently from sync queue', async () => {
+  const client = new FinanceClient('demo', () => {});
+  client.session = { owner: 'review-fixture', expiresAt: Date.now() + 60000 };
+  await client.saveDraft({
+    kind: 'finance-imports',
+    sessions: [
+      {
+        id: 'bill',
+        rows: [{ id: 'one' }, { id: 'two' }],
+        reviews: { one: { done: false }, two: { done: true } },
+      },
+    ],
+  });
+  assert.equal(client.reviewCount, 1);
+  assert.equal(client.pending.length, 0);
+  await client.saveDraft({
+    kind: 'finance-imports',
+    sessions: [
+      {
+        id: 'bill',
+        rows: [{ id: 'one' }, { id: 'two' }],
+        reviews: { one: { done: true }, two: { done: true } },
+      },
+    ],
+  });
+  assert.equal(client.reviewCount, 0);
+});
+
+void test('campus review drafts stay separate from the mutation queue and add to bill review count', async () => {
+  const client = new FinanceClient('demo', () => {});
+  client.session = {
+    owner: 'campus-review-test',
+    expiresAt: Date.now() + 60000,
+  };
+  await client.saveDraft({
+    kind: 'finance-imports',
+    sessions: [
+      { id: 'bill', rows: [{ id: 'one' }], reviews: { one: { done: false } } },
+    ],
+  });
+  await localPut('finance/campus-drafts/campus-review-test/demo', [
+    {
+      rows: [{ id: 'a' }, { id: 'b' }],
+      reviews: { a: { done: false }, b: { done: true } },
+    },
+  ]);
+  await client.refreshReviewCounts();
+  assert.equal(client.reviewCount, 2);
+  assert.equal(client.pending.length, 0);
+});
+
+void test('formal ledger review handoff preserves source, retries safely, refuses conflicts and missing transactions', async () => {
+  const client = new FinanceClient('personal', () => {});
+  client.session = { owner: 'promotion-test', expiresAt: Date.now() + 60000 };
+  client.data = emptyFinanceState('promotion-test', 'personal');
+  const original = globalThis.fetch;
+  const transaction = { id: 'source' } as FinanceTransaction;
+  const source = { kind: 'finance-imports', sessions: [{ rows: [{ id: 'pending' }], reviews: {} }] };
+  globalThis.fetch = () => Promise.resolve(Response.json({ state: { transactions: [transaction] } }));
+  await localPut('finance/draft/promotion-test/demo', source);
+  try {
+    await assert.rejects(() => client.copyDemoReviewDrafts(), /先完成演示流水迁入/);
+    assert.equal(await localGet('finance/draft/promotion-test/personal'), undefined);
+    client.data.transactions = [transaction];
+    await client.copyDemoReviewDrafts();
+    await client.copyDemoReviewDrafts();
+    assert.equal(client.reviewCount, 1);
+    assert.deepEqual(await localGet('finance/draft/promotion-test/demo'), source);
+    assert.deepEqual(await localGet('finance/draft/promotion-test/personal'), source);
+    const existing = { kind: 'finance-imports', sessions: [] };
+    await localPut('finance/draft/promotion-test/personal', existing);
+    await assert.rejects(() => client.copyDemoReviewDrafts(), /已有不同核对草稿/);
+    assert.deepEqual(await localGet('finance/draft/promotion-test/personal'), existing);
+  } finally { globalThis.fetch = original; }
+});
