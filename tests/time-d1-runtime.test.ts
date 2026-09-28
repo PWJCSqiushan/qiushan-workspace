@@ -21,16 +21,16 @@ test('real D1 retains large history and replays lean receipts with full history 
   const raw=await db.prepare('SELECT result_json FROM time_receipts WHERE operation_id=?').bind(op.operationId).first<{result_json:string}>();assert.ok(!raw!.result_json.startsWith('gzip:'));assert.ok(Buffer.byteLength(raw!.result_json)<150000);
   assert.equal((await store.snapshot('personal','summary')).corrections[0].before.intervals.length,0);
   assert.equal((await store.exportSnapshot('personal')).corrections[0].before.intervals.length,80);
-  const current=await store.snapshot('personal');assert.equal(current.corrections.length,24);assert.equal(current.intervals.length,80);assert.equal(current.plans[0].attendance,'on_time');
-  await store.mutate({space:'personal',baseVersion:2,operationId:'upsert-large',mutation:{type:'upsert',interval:{id:'new',start:'2026-02-01T08:00:00.000Z',end:'2026-02-01T08:30:00.000Z',categoryId:'study'}}});assert.equal((await store.snapshot('personal')).intervals.length,81);
+  const current=await store.snapshot('personal');assert.equal(current.corrections.length,24);assert.equal(current.intervals.filter(r=>r.categoryId==='study').length,80);assert.equal(current.plans[0].attendance,'on_time');
+  await store.mutate({space:'personal',baseVersion:2,operationId:'upsert-large',mutation:{type:'upsert',interval:{id:'new',start:'2026-02-01T08:00:00.000Z',end:'2026-02-01T08:30:00.000Z',categoryId:'study'}}});assert.equal((await store.snapshot('personal')).intervals.filter(r=>r.categoryId==='study').length,81);
   assert.deepEqual(await store.mutate(op),result);assert.equal((await store.snapshot('personal')).version,3);
   await db.prepare('UPDATE time_receipts SET result_json=? WHERE operation_id=?').bind('gzip:'+gzipSync(JSON.stringify(result)).toString('base64'),op.operationId).run();
   assert.deepEqual(await store.mutate(op),result);
   const last=(await store.snapshot('personal','summary')).corrections.at(-1)!;
   await store.mutate({space:'personal',baseVersion:3,operationId:'undo-large',mutation:{type:'undo',correctionId:last.id}});
-  assert.equal((await store.snapshot('personal')).intervals.length,80);
+  assert.equal((await store.snapshot('personal')).intervals.filter(r=>r.categoryId==='study').length,80);
   await store.mutate({space:'personal',baseVersion:4,operationId:'redo-large',mutation:{type:'redo',correctionId:last.id}});
-  assert.equal((await store.snapshot('personal')).intervals.length,81);
+  assert.equal((await store.snapshot('personal')).intervals.filter(r=>r.categoryId==='study').length,81);
   for(let i=0;i<8;i++)await store.mutate({space:'personal',baseVersion:5+i,operationId:'attendance-repeat-'+i,mutation:{type:'setAttendance',id:'course',status:i%2?'on_time':'absent'}});
   assert.equal((await store.snapshot('personal')).version,13);
  }finally{await mf.dispose();}

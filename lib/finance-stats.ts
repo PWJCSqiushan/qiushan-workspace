@@ -428,7 +428,8 @@ export function calculateFinanceStats(
   }
 
   const mealRows = state.meals.filter(
-    (meal) =>
+    (meal): meal is Exclude<FinanceMeal, { status: 'skipped' }> =>
+      meal.status !== 'skipped' &&
       !meal.deleted &&
       inRange(meal.date, range) &&
       (range.meal === undefined || meal.meal === range.meal),
@@ -462,19 +463,72 @@ export function calculateFinanceStats(
     );
     mealPlaceMap.set(merchantId, row);
   };
+  let unlinkedMealCents = 0;
+  const unlinkedMealTransactionIds: string[] = [];
   for (const expense of expenses) {
     if (!expense.mealId) {
       // Known dining payments count toward restaurant spending even when the
       // meal link is still under review. They never invent a meal count/slot.
-      if (range.meal === undefined) {
+      if (
+        range.meal === undefined &&
+        inRange(dateKey(expense.occurredAt), range)
+      ) {
         const refunded = refundByAllocation(state, expense.id);
         for (const allocation of expense.allocations.filter(
           (a) => a.content === '餐饮',
-        ))
+        )) {
+          if (!unlinkedMealTransactionIds.includes(expense.id))
+            unlinkedMealTransactionIds.push(expense.id);
+          unlinkedMealCents = addFinanceCents(
+            unlinkedMealCents,
+            allocation.amountCents - (refunded.get(allocation.id) || 0),
+            'unlinked dining',
+          );
           addMealAmount(
             allocation.merchantId ?? expense.counterparty ?? '__unknown__',
             allocation.amountCents - (refunded.get(allocation.id) || 0),
           );
+        }
+        // If every allocation is dining, an unallocated personal refund is
+        // definitely dining too. Keep its merchant unknown; do not invent a
+        // allocation or silently overstate the unlinked subtotal after detach.
+        if (
+          expense.allocations.length &&
+          expense.allocations.every((a) => a.content === '餐饮')
+        ) {
+          const refundTotal = state.transactions
+            .filter(
+              (t) =>
+                !t.deleted && t.kind === 'refund' && t.relatedId === expense.id,
+            )
+            .reduce(
+              (sum, t) =>
+                addFinanceCents(
+                  sum,
+                  refundPersonalCents(t),
+                  'unlinked refunds',
+                ),
+              0,
+            );
+          const mapped = [...refunded.values()].reduce(
+            (sum, cents) =>
+              addFinanceCents(sum, cents, 'mapped dining refunds'),
+            0,
+          );
+          const unmapped = addFinanceCents(
+            refundTotal,
+            -mapped,
+            'unmapped dining refunds',
+          );
+          if (unmapped > 0) {
+            unlinkedMealCents = addFinanceCents(
+              unlinkedMealCents,
+              -unmapped,
+              'unlinked dining net',
+            );
+            addMealAmount('__unknown__', -unmapped);
+          }
+        }
       }
       continue;
     }
@@ -591,6 +645,15 @@ export function calculateFinanceStats(
     sponsorCents,
     mealCount: mealRows.length,
     pendingMealCount: mealRows.filter((meal) => meal.pricePending).length,
+    skippedMealCount: state.meals.filter(
+      (m) =>
+        !m.deleted &&
+        m.status === 'skipped' &&
+        inRange(m.date, range) &&
+        (range.meal === undefined || m.meal === range.meal),
+    ).length,
+    unlinkedMealCents,
+    unlinkedMealTransactionIds,
     mealPlaces,
   };
 }

@@ -1,5 +1,9 @@
 'use client';
 import { useState, type SyntheticEvent } from 'react';
+import {
+  transactionPersonalCents,
+  preservesUnallocatedExpense,
+} from '@/lib/finance-transaction-edits';
 import { Plus, Trash2 } from 'lucide-react';
 import type {
   FinanceAllocation,
@@ -63,7 +67,7 @@ export function FinanceTransactionEditor({
   const [target, setTarget] = useState(initial?.targetAccountId || ''),
     [paid, setPaid] = useState(initial ? amount(initial.amountCents) : ''),
     [personal, setPersonal] = useState(
-      initial?.personalCents !== undefined ? amount(initial.personalCents) : '',
+      initial ? amount(transactionPersonalCents(initial)) : '',
     );
   const [merchant, setMerchant] = useState(
       initial?.counterparty ||
@@ -76,10 +80,12 @@ export function FinanceTransactionEditor({
   const [analysisOnly, setAnalysis] = useState(!!initial?.analysisOnly),
     [unusual, setUnusual] = useState(!!initial?.unusual),
     [split, setSplit] = useState(
-      !!initial && initial.personalCents !== initial.amountCents,
+      !!initial &&
+        ['expense', 'refund'].includes(initial.kind) &&
+        transactionPersonalCents(initial) !== initial.amountCents,
     );
   const [lines, setLines] = useState<Line[]>(
-    (initial?.allocations.length
+    (initial?.allocations.length || initial?.kind === 'refund'
       ? initial.allocations
       : [
           {
@@ -146,18 +152,24 @@ export function FinanceTransactionEditor({
           ? parseMoney(personal)
           : paidCents
         : undefined;
-      const allocations: FinanceAllocation[] = allocationKind
-        ? lines
-            .map(({ value, ...l }) => ({
-              ...l,
-              amountCents:
-                lines.length === 1 ? personalCents! : parseMoney(value),
-              ...(kind === 'refund' ? {} : { refundOfAllocationId: undefined }),
-            }))
-            .filter((l) => l.amountCents > 0)
-        : [];
+      const keepUnallocated = preservesUnallocatedExpense(initial, kind, lines);
+      const allocations: FinanceAllocation[] =
+        allocationKind && !keepUnallocated
+          ? lines
+              .map(({ value, ...l }) => ({
+                ...l,
+                amountCents:
+                  lines.length === 1 ? personalCents! : parseMoney(value),
+                ...(kind === 'refund'
+                  ? {}
+                  : { refundOfAllocationId: undefined }),
+              }))
+              .filter((l) => l.amountCents > 0)
+          : [];
       if (
         allocationKind &&
+        !keepUnallocated &&
+        !(kind === 'refund' && lines.length === 0) &&
         allocations.reduce((s, l) => s + l.amountCents, 0) !== personalCents
       )
         throw new Error('用途分配合计必须等于本人承担金额');
@@ -415,7 +427,7 @@ export function FinanceTransactionEditor({
                     checked={split}
                     onChange={(e) => {
                       setSplit(e.target.checked);
-                      if (e.target.checked && !personal) setPersonal(paid);
+                      if (e.target.checked) setPersonal(paid);
                     }}
                   />
                   {kind === 'refund'
@@ -468,6 +480,11 @@ export function FinanceTransactionEditor({
                   </button>
                 )}
               </div>
+              {kind === 'refund' && lines.length === 0 && (
+                <p className="f-hint">
+                  这笔退款未拆分原用途，可直接修改金额或备注。用途统计追溯原消费。
+                </p>
+              )}
               {lines.map((line, index) => (
                 <div className="f-allocation" key={line.id}>
                   <div className="f-row">

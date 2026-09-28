@@ -8,6 +8,181 @@ import { database } from './d1-helper.ts';
 import { handleFinanceRequest, financeFailure } from '../lib/finance-api.ts';
 import { emptyFinanceState } from '../lib/finance-types.ts';
 import type { FinanceTransaction } from '../lib/finance-types.ts';
+import { skipMealMutation } from '../lib/finance-places.ts';
+
+void test('skip outbox retains a conflict, rebases current links, replays lost receipt and restores through undo', async () => {
+  const { db, sqlite } = database(),
+    store = new FinanceStore(db, 'skip-client'),
+    originalFetch = globalThis.fetch;
+  let offline = false,
+    loseReceipt = false;
+  const operationIds: string[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (offline) throw new TypeError('offline');
+    const path =
+      typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.href
+          : input.url;
+    if (path === '/api/session')
+      return Response.json({
+        owner: 'skip-client',
+        expiresAt: Date.now() + 3600000,
+      });
+    let response: Response;
+    try {
+      response = await handleFinanceRequest(
+        new Request('http://local' + path, init),
+        store,
+      );
+    } catch (e) {
+      response = financeFailure(e);
+    }
+    if (path.includes('mutations')) {
+      operationIds.push(
+        JSON.parse(typeof init?.body === 'string' ? init.body : '').operationId,
+      );
+      if (loseReceipt) {
+        loseReceipt = false;
+        throw new TypeError('receipt lost');
+      }
+    }
+    return response;
+  }) as typeof fetch;
+  const client = new FinanceClient('demo', () => {});
+  const tx = (id: string): FinanceTransaction => ({
+    id,
+    version: 0,
+    kind: 'expense',
+    accountId: 'bank',
+    occurredAt: '2026-09-01T12:00:00+08:00',
+    amountCents: 1200,
+    personalCents: 800,
+    mealId: 'meal',
+    allocations: [
+      {
+        id: id + '-a',
+        categoryId: null,
+        content: '餐饮',
+        amountCents: 800,
+        merchantId: 'venue',
+        nature: 'daily',
+      },
+    ],
+  });
+  try {
+    await client.start();
+    await client.enqueue({
+      type: 'batch',
+      mutations: [
+        {
+          type: 'put',
+          collection: 'accounts',
+          expectedVersion: 0,
+          entity: {
+            id: 'bank',
+            version: 0,
+            name: '合成账户',
+            kind: 'asset',
+            openingCents: 50000,
+            openingAt: '2026-01-01T00:00:00Z',
+          },
+        },
+        {
+          type: 'put',
+          collection: 'places',
+          expectedVersion: 0,
+          entity: { id: 'venue', version: 0, name: '合成餐厅', parentId: null },
+        },
+        {
+          type: 'put',
+          collection: 'meals',
+          expectedVersion: 0,
+          entity: {
+            id: 'meal',
+            version: 0,
+            date: '2026-09-01',
+            meal: 'lunch',
+            placeId: 'venue',
+            companions: 'alone',
+            payment: 'aa',
+            pricePending: false,
+          },
+        },
+        {
+          type: 'saveTransaction',
+          expectedVersion: 0,
+          transaction: tx('first'),
+        },
+      ],
+    });
+    offline = true;
+    await client.enqueue(skipMealMutation(client.data!, client.data!.meals[0]));
+    assert.equal(client.data!.meals[0].status, 'skipped');
+    const draftId = client.pending[0].operationId;
+    await store.mutate({
+      space: 'demo',
+      baseVersion: 0,
+      operationId: 'other-device-new-link',
+      mutation: {
+        type: 'saveTransaction',
+        transaction: tx('second'),
+        expectedVersion: 0,
+      },
+    });
+    offline = false;
+    await client.sync();
+    assert.equal(client.pending[0].operationId, draftId);
+    assert.equal(client.pending[0].state, 'conflict');
+    const latest = await store.snapshot('demo');
+    assert.equal(latest.meals[0].status, undefined);
+    assert.equal(latest.transactions.length, 2);
+    await store.mutate({
+      space: 'demo',
+      baseVersion: 0,
+      operationId: 'changed-during-review',
+      mutation: {
+        type: 'saveTransaction',
+        transaction: {
+          ...latest.transactions.find((t) => t.id === 'second')!,
+          note: 'latest financial note',
+        },
+        expectedVersion: 1,
+      },
+    });
+    await assert.rejects(client.resolve(draftId, true), /核对期间/);
+    assert.equal(client.pending[0].operationId, draftId);
+    loseReceipt = true;
+    await client.resolve(draftId, true);
+    assert.equal(client.pending.length, 1);
+    const retry = client.pending[0];
+    assert.notEqual(retry.operationId, draftId);
+    assert.equal(retry.mutation.type, 'skipMeal');
+    if (retry.mutation.type === 'skipMeal')
+      assert.equal(retry.mutation.expectedTransactions.length, 2);
+    await client.sync();
+    assert.equal(client.pending.length, 0);
+    assert.equal(operationIds.at(-1), operationIds.at(-2));
+    const skipped = await store.snapshot('demo');
+    assert.equal(skipped.meals[0].status, 'skipped');
+    assert.ok(skipped.transactions.every((t) => !t.mealId));
+    assert.equal(
+      skipped.history.filter((h) => h.label.includes('未用餐')).length,
+      1,
+    );
+    await client.enqueue({
+      type: 'undo',
+      historyId: skipped.history.at(-1)!.id,
+    });
+    assert.ok(client.data!.transactions.every((t) => t.mealId === 'meal'));
+    assert.equal(client.data!.meals[0].status, undefined);
+  } finally {
+    client.stop();
+    globalThis.fetch = originalFetch;
+    sqlite.close();
+  }
+});
 
 void test('finance outbox keeps stable IDs after lost responses, serializes offline edits, and retains genuine conflicts', async () => {
   const { db, sqlite } = database(),

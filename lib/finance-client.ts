@@ -1,4 +1,5 @@
 import { financeMessage } from './finance-messages.ts';
+import { mealSkipPreview } from './finance-places.ts';
 import {
   localGet,
   localPut,
@@ -561,6 +562,7 @@ export class FinanceClient {
         await localPut('finance/archive/' + this.prefix() + '/' + id, item);
         await localRemove('finance/outbox/' + this.prefix() + '/' + id);
       } else {
+        const reviewed = this.confirmed;
         await this.refresh();
         const versions = new Map<string, number>();
         const rebase = (m: FinanceMutation): FinanceMutation => {
@@ -569,6 +571,37 @@ export class FinanceClient {
               ...m,
               mutations: m.mutations.map(rebase) as typeof m.mutations,
             };
+          // Called only after the conflict review displays the current links.
+          // Refresh the association guard; never copy stale financial objects.
+          if (m.type === 'skipMeal') {
+            const current = this.confirmed!.meals.find(
+              (meal) => meal.id === m.meal.id,
+            );
+            const shown = reviewed!.meals.find((meal) => meal.id === m.meal.id);
+            const associationKey = (state: FinanceState) =>
+              JSON.stringify(
+                mealSkipPreview(state, m.meal.id).expectedTransactions.sort(
+                  (a, b) => a.id.localeCompare(b.id),
+                ),
+              );
+            if (
+              current?.version !== shown?.version ||
+              associationKey(reviewed!) !== associationKey(this.confirmed!)
+            )
+              throw new Error(
+                '核对期间关联记录又有变化，请重新打开核对面板；原草稿仍保留。',
+              );
+            if (current?.deleted)
+              throw new Error(
+                '这餐已清除，请从最新餐位重新记录，原草稿仍保留。',
+              );
+            return {
+              ...m,
+              expectedVersion: current?.version || 0,
+              expectedTransactions: mealSkipPreview(this.confirmed!, m.meal.id)
+                .expectedTransactions,
+            };
+          }
           if (
             m.type === 'put' ||
             m.type === 'delete' ||

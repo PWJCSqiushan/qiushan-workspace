@@ -1,3 +1,5 @@
+import {reconcileCommutes,suppressCommute} from './time-commute.ts';
+import {applySemester,validatePreset,savedSemester,type SemesterPreset} from './time-semester.ts';
 import {TIME_SLOT_MINUTES,TIME_SLOT_MS} from './time-grid.ts';
 import {AppError} from './workspace.ts';
 
@@ -26,7 +28,8 @@ export type TimeInterval = {
   estimated?:boolean;
   version?:number;
   courseGroupKey?:string;
-  generatedBy?:'course';
+  generatedBy?:'course'|'commute';
+  commuteEdges?:string[];
 };
 
 export type TimePlanStatus = 'planned'|'confirmed'|'cancelled';
@@ -34,7 +37,7 @@ export const TIME_ATTENDANCE_STATUSES = [
   'on_time', 'late_under_5', 'late_over_5', 'absent', 'excused',
 ] as const;
 export type TimeAttendanceStatus = typeof TIME_ATTENDANCE_STATUSES[number];
-export type CourseMetadata={courseName?:string;location?:string;deliveryMode?:'in_person'|'online';lateMinutes?:number;originalPlanIds?:string[];sourcePeriods?:number[];importSource?:string};
+export type CourseMetadata={logicalOccurrenceId?:string;sourceLessonKey?:string;courseCode?:string;teachingDate?:string;teachingWeek?:number;courseName?:string;location?:string;deliveryMode?:'in_person'|'online';lateMinutes?:number;originalPlanIds?:string[];sourcePeriods?:number[];importSource?:string};
 export type TimePlan = TimeInterval & CourseMetadata & {status:TimePlanStatus;attendance?:TimeAttendanceStatus};
 export type CourseDecision={groupKey:string;action:'merge'|'keep';status?:TimeAttendanceStatus;lateMinutes?:number;cancelled?:boolean;deliveryMode?:'in_person'|'online'};
 export type TimeTimer = {start:string;categoryId:string;note?:string;id?:string};
@@ -120,6 +123,9 @@ export type TimeMutation =
   | {type:'setCourseState';id:string;status?:TimeAttendanceStatus;lateMinutes?:number;deliveryMode?:'in_person'|'online';cancelled?:boolean}
   | {type:'migrateCourses';decisions:CourseDecision[]}
   | {type:'rolloverCourses'}
+  | {type:'saveSemester';preset:SemesterPreset}
+  | {type:'applySemester';approvedMappings?:Record<string,string[]>}
+  | {type:'restoreCommute';edges:string[]}
   | {type:'restore';snapshot:TimeCoreSnapshot};
 
 export type TimeMutationEnvelope = {
@@ -227,8 +233,9 @@ export function validateInterval(value:unknown,allowUnrecorded=false):TimeInterv
   if(input.estimated!==undefined)ensure(typeof input.estimated==='boolean','估计标记无效');
   if(input.version!==undefined)ensure(Number.isSafeInteger(input.version)&&input.version>=0,'区间版本无效');
   if(input.courseGroupKey!==undefined)ensure(typeof input.courseGroupKey==='string'&&SOURCE_KEY_RE.test(input.courseGroupKey),'课程组标识无效');
-  if(input.generatedBy!==undefined)ensure(input.generatedBy==='course','自动来源无效');
-  return {...(input.courseGroupKey?{courseGroupKey:input.courseGroupKey}:{}),...(input.generatedBy?{generatedBy:input.generatedBy}:{}),id,start,end,categoryId:input.categoryId!,...(input.note?{note:input.note}:{}),...(input.sourceKey?{sourceKey:input.sourceKey}:{}),manual:input.manual!==false,...(input.estimated?{estimated:true}:{}),version:input.version??1};
+  if(input.generatedBy!==undefined)ensure(['course','commute'].includes(input.generatedBy),'自动来源无效');
+  if(input.commuteEdges!==undefined)ensure(Array.isArray(input.commuteEdges)&&input.commuteEdges.length<=100&&input.commuteEdges.every(e=>typeof e==='string'&&/^commute-edge:[a-f0-9]+:(pre|post)$/.test(e)),'通勤关联无效');
+  return {...(input.commuteEdges?{commuteEdges:[...input.commuteEdges]}:{}),...(input.courseGroupKey?{courseGroupKey:input.courseGroupKey}:{}),...(input.generatedBy?{generatedBy:input.generatedBy}:{}),id,start,end,categoryId:input.categoryId!,...(input.note?{note:input.note}:{}),...(input.sourceKey?{sourceKey:input.sourceKey}:{}),manual:input.manual!==false,...(input.estimated?{estimated:true}:{}),version:input.version??1};
 }
 
 export function validatePlan(value:unknown):TimePlan {
@@ -241,7 +248,8 @@ export function validatePlan(value:unknown):TimePlan {
 
 export function courseMetadata(input:CourseMetadata):CourseMetadata {
   const out:CourseMetadata={};
-  for(const key of ['courseName','location','importSource'] as const)if(input[key]!==undefined){ensure(typeof input[key]==='string'&&input[key]!.length>0&&input[key]!.length<=200,'课程信息无效');out[key]=input[key];}
+  if(input.teachingWeek!==undefined){ensure(Number.isInteger(input.teachingWeek)&&input.teachingWeek>=1&&input.teachingWeek<=30,'教学周无效');out.teachingWeek=input.teachingWeek;}
+  for(const key of ['courseName','location','importSource','logicalOccurrenceId','sourceLessonKey','courseCode','teachingDate'] as const)if(input[key]!==undefined){ensure(typeof input[key]==='string'&&input[key]!.length>0&&input[key]!.length<=200,'课程信息无效');out[key]=input[key];}
   if(input.deliveryMode!==undefined){ensure(['in_person','online'].includes(input.deliveryMode),'授课方式无效');out.deliveryMode=input.deliveryMode;}
   if(input.lateMinutes!==undefined){ensure(Number.isSafeInteger(input.lateMinutes)&&input.lateMinutes>=0&&input.lateMinutes<=11520,'迟到分钟无效');out.lateMinutes=input.lateMinutes;}
   if(input.originalPlanIds!==undefined){ensure(Array.isArray(input.originalPlanIds)&&input.originalPlanIds.length<=500&&input.originalPlanIds.every(id=>typeof id==='string'&&ID_RE.test(id)),'原课程标识无效');out.originalPlanIds=[...input.originalPlanIds];}
@@ -289,8 +297,8 @@ type CoreEntity=Record<string,unknown>;
 type CoreCollection='categories'|'intervals'|'plans'|'sources';
 function entityKey(collection:CoreCollection,item:CoreEntity){return String(item[collection==='sources'?'sourceKey':'id']||'');}
 function automaticEntity(collection:CoreCollection,item:CoreEntity){
-  if(collection==='intervals')return item.generatedBy==='course'&&item.manual===false;
-  if(collection==='plans')return item.categoryId==='class'&&item.manual===false;
+  if(collection==='intervals')return ['course','commute'].includes(String(item.generatedBy))&&item.manual===false;
+  if(collection==='plans')return (item.categoryId==='class'||item.generatedBy==='commute')&&item.manual===false;
   if(collection==='sources')return item.manual===false;
   return false;
 }
@@ -349,8 +357,8 @@ function applyCorrectionDelta(current:TimeCoreSnapshot,original:TimeCorrection,d
   // Restoring a manual interval takes precedence over generated course rows;
   // remove only generated rows that would otherwise overlap that restored
   // manual interval. Manual and unrelated records are never removed here.
-  const protectedRows=result.intervals.filter(item=>!(item.generatedBy==='course'&&item.manual===false));
-  result.intervals=result.intervals.flatMap(item=>{if(!(item.generatedBy==='course'&&item.manual===false))return [item];let spans=[{start:timestampMs(item.start),end:timestampMs(item.end)}];for(const row of protectedRows){const a=timestampMs(row.start),b=timestampMs(row.end);spans=spans.flatMap(span=>b<=span.start||a>=span.end?[span]:[...(a>span.start?[{start:span.start,end:a}]:[]),...(b<span.end?[{start:b,end:span.end}]:[])]);}return spans.map(span=>span.start===timestampMs(item.start)&&span.end===timestampMs(item.end)?item:{...item,id:courseKey([item.courseGroupKey||item.id,String(span.start),String(span.end)]),start:new Date(span.start).toISOString(),end:new Date(span.end).toISOString()});});
+  const protectedRows=result.intervals.filter(item=>!(['course','commute'].includes(String(item.generatedBy))&&item.manual===false));
+  result.intervals=result.intervals.flatMap(item=>{if(!(['course','commute'].includes(String(item.generatedBy))&&item.manual===false))return [item];let spans=[{start:timestampMs(item.start),end:timestampMs(item.end)}];for(const row of protectedRows){const a=timestampMs(row.start),b=timestampMs(row.end);spans=spans.flatMap(span=>b<=span.start||a>=span.end?[span]:[...(a>span.start?[{start:span.start,end:a}]:[]),...(b<span.end?[{start:b,end:span.end}]:[])]);}return spans.map(span=>span.start===timestampMs(item.start)&&span.end===timestampMs(item.end)?item:{...item,id:courseKey([item.courseGroupKey||item.id,String(span.start),String(span.end)]),start:new Date(span.start).toISOString(),end:new Date(span.end).toISOString()});});
   result.intervals.sort((a,b)=>timestampMs(a.start)-timestampMs(b.start)||a.id.localeCompare(b.id));
   return result;
 }
@@ -379,7 +387,7 @@ function overlapDetails(intervals:TimeInterval[],next:TimeInterval){
 export function upsertInterval(core:TimeCoreSnapshot,input:unknown,replace=false):{core:TimeCoreSnapshot;overlaps:Array<Record<string,string>>} {
   const next=validateInterval(input);
   assertCategory(core,next.categoryId);
-  const conflicts=overlapDetails(core.intervals,next).filter(item=>!core.intervals.some(row=>row.id===item.id&&row.generatedBy==='course'&&row.manual===false));
+  const conflicts=overlapDetails(core.intervals,next).filter(item=>!core.intervals.some(row=>row.id===item.id&&['course','commute'].includes(String(row.generatedBy))&&row.manual===false));
   if(conflicts.length&&!replace)throw new TimeValidationError('时间区间重叠，需要确认替换或拆分',409,{code:'TIME_OVERLAP_CONFIRMATION_REQUIRED',overlaps:conflicts});
   let intervals=core.intervals.filter(item=>item.id!==next.id);
   for(const current of intervals){
@@ -447,7 +455,7 @@ export function previewCourseMigration(snapshot:Pick<TimeSnapshot,'plans'|'versi
     const gap=previous?(timestampMs(plan.start)-timestampMs(previous.end))/60000:-1;
     const provenance=!!(previous?.courseName&&plan.courseName===previous.courseName&&plan.importSource&&plan.importSource===previous.importSource&&plan.sourcePeriods?.length&&previous.sourcePeriods?.length&&Math.min(...plan.sourcePeriods)===Math.max(...previous.sourcePeriods)+1);
     const legacy=!!(previous?.sourceKey?.startsWith('timetable:')&&plan.sourceKey?.startsWith('timetable:')&&previous.note&&previous.note===plan.note&&!previous.courseName&&!plan.courseName);
-    if(previous&&localDate(timestampMs(previous.start))===localDate(timestampMs(plan.start))&&gap>=0&&gap<=10&&(provenance||legacy))buckets.at(-1)!.push(plan);else buckets.push([plan]);
+    if(previous&&localDate(timestampMs(previous.start))===localDate(timestampMs(plan.start))&&gap>=0&&gap<=(previous.sourceLessonKey&&previous.sourceLessonKey===plan.sourceLessonKey?20:10)&&(provenance||legacy))buckets.at(-1)!.push(plan);else buckets.push([plan]);
   }
   const groups:CourseMigrationGroup[]=buckets.map(plans=>{
     const reasons:string[]=[];
@@ -472,7 +480,7 @@ function setCourseState(plan:TimePlan,input:{status?:TimeAttendanceStatus;lateMi
 }
 function courseLinked(row:TimeInterval,plan:TimePlan){return row.courseGroupKey=== (plan.courseGroupKey||plan.id)||row.id===`actual-${plan.id}`||!!(plan.sourceKey&&row.sourceKey===plan.sourceKey)||!!plan.originalPlanIds?.some(id=>row.id===`actual-${id}`);}
 function removeCourseRows(core:TimeCoreSnapshot,plan:TimePlan,allLinked=false){
-  const removed=core.intervals.filter(row=>courseLinked(row,plan)&&(allLinked||(row.generatedBy==='course'&&row.manual===false)));
+  const removed=core.intervals.filter(row=>courseLinked(row,plan)&&(allLinked||(['course','commute'].includes(String(row.generatedBy))&&row.manual===false)));
   core.intervals=core.intervals.filter(row=>!removed.includes(row));
   for(const source of core.sources){if(source.kind==='actual'&&removed.some(row=>row.id===source.recordId)){source.kind='plan';source.recordId=plan.id;source.status=plan.status==='cancelled'?'cancelled':'active';}}
 }
@@ -486,7 +494,7 @@ function reconcileCourse(core:TimeCoreSnapshot,plan:TimePlan,now:Date,preserveLe
   if(plan.attendance.startsWith('late_')&&plan.lateMinutes===undefined)return core;
   removeCourseRows(core,plan);
   let spans=[{start:timestampMs(plan.start)+(plan.lateMinutes||0)*60000,end:timestampMs(plan.end)}];
-  for(const row of core.intervals){const a=timestampMs(row.start),b=timestampMs(row.end);spans=spans.flatMap(span=>b<=span.start||a>=span.end?[span]:[...(a>span.start?[{start:span.start,end:a}]:[]),...(b<span.end?[{start:b,end:span.end}]:[])]);}
+  for(const row of core.intervals.filter(r=>r.generatedBy!=='commute')){const a=timestampMs(row.start),b=timestampMs(row.end);spans=spans.flatMap(span=>b<=span.start||a>=span.end?[span]:[...(a>span.start?[{start:span.start,end:a}]:[]),...(b<span.end?[{start:b,end:span.end}]:[])]);}
   const key=plan.courseGroupKey||plan.id;
   for(const span of spans){core.intervals.push({id:courseKey([key,String(span.start),String(span.end)]),start:new Date(span.start).toISOString(),end:new Date(span.end).toISOString(),categoryId:'class',...(plan.note?{note:plan.note}:{}),manual:false,generatedBy:'course',courseGroupKey:key,version:1});}
   core.intervals.sort((a,b)=>timestampMs(a.start)-timestampMs(b.start)||a.id.localeCompare(b.id));return core;
@@ -518,7 +526,7 @@ export function rolloverCourses(input:TimeCoreSnapshot,now=new Date()):TimeCoreS
   // Merge review protects lesson identity, not default attendance. Reconcile each
   // remaining legacy period independently, retaining its explicit exceptions.
   for(const plan of core.plans)if(plan.categoryId==='class')reconcileCourse(core,plan,now,unresolved.has(plan.id));
-  core.plans.sort((a,b)=>timestampMs(a.start)-timestampMs(b.start)||a.id.localeCompare(b.id));return core;
+  core.plans.sort((a,b)=>timestampMs(a.start)-timestampMs(b.start)||a.id.localeCompare(b.id));return reconcileCommutes(core,now);
 }
 
 /** Legacy queued half-period operations cannot safely target a merged lesson. */
@@ -540,6 +548,9 @@ export function applyTimeMutation(snapshot:TimeSnapshot,mutation:TimeMutation,op
   let core=clone(before);let resultCorrection:TimeCorrection|undefined;let accepted:ImportCandidate[]|undefined;let skipped:ImportCandidate[]|undefined;
   guardMergedCourseMutation(core,mutation);
   switch(mutation.type){
+    case 'saveSemester': {const preset=validatePreset(mutation.preset);const key='semester-preset:'+preset.id;core.sources=core.sources.filter(s=>!s.sourceKey.startsWith('semester-preset:'));core.sources.push({sourceKey:key,kind:'plan',status:'deleted',manual:true,payload:{preset}});break;}
+    case 'applySemester': {const preset=savedSemester(core);ensure(preset,'尚未保存学期预设');core=applySemester(core,preset,mutation.approvedMappings,now);break;}
+    case 'restoreCommute': {ensure(Array.isArray(mutation.edges)&&mutation.edges.every(e=>typeof e==='string'&&e.startsWith('commute-edge:')),'通勤关联无效');core.sources=core.sources.filter(s=>!mutation.edges.includes(s.sourceKey));break;}
     case 'migrateCourses': core=migrateCourses(core,mutation.decisions,now);break;
     case 'rolloverCourses': core=rolloverCourses(core,now);break;
     case 'setCourseState': {
@@ -549,14 +560,15 @@ export function applyTimeMutation(snapshot:TimeSnapshot,mutation:TimeMutation,op
       break;
     }
     case 'upsert': {
-      const existing=core.intervals.find(item=>item.id===mutation.interval.id);
-      const nextInput={...mutation.interval,generatedBy:undefined,courseGroupKey:undefined,id:mutation.interval.id||crypto.randomUUID(),...(mutation.interval.sourceKey===undefined&&existing?.sourceKey?{sourceKey:existing.sourceKey}:{}),manual:true,version:(existing?.version||0)+1};
+      const existing=core.intervals.find(item=>item.id===mutation.interval.id);if(existing?.generatedBy==='commute')suppressCommute(core,existing);
+      const nextInput={...mutation.interval,generatedBy:undefined,commuteEdges:undefined,courseGroupKey:undefined,id:mutation.interval.id||crypto.randomUUID(),...(mutation.interval.sourceKey===undefined&&existing?.sourceKey?{sourceKey:existing.sourceKey}:{}),manual:true,version:(existing?.version||0)+1};
       const changed=upsertInterval(core,nextInput,mutation.replace===true);core=changed.core;
       if(nextInput.sourceKey)addSource(core,{sourceKey:nextInput.sourceKey,kind:'actual',status:'active',manual:true,recordId:nextInput.id,updatedAt:stamp});
       resultCorrection=correction(before,core,operationId,'upsert',stamp);break;
     }
     case 'delete': {
       const found=core.intervals.find(item=>item.id===mutation.id);ensure(found,'时间区间不存在',404);
+      if(found.generatedBy==='commute')suppressCommute(core,found);
       core.intervals=core.intervals.filter(item=>item.id!==mutation.id);
       if(found.sourceKey)addSource(core,{sourceKey:found.sourceKey,kind:'actual',status:'deleted',manual:true,recordId:found.id,updatedAt:stamp});
       resultCorrection=correction(before,core,operationId,'delete',stamp);break;
@@ -576,10 +588,10 @@ export function applyTimeMutation(snapshot:TimeSnapshot,mutation:TimeMutation,op
       if(index<0){ensure(category.id!=='unrecorded','未记录只能由系统提供');core.categories.push(category);}else core.categories[index]=category;break;
     }
     case 'upsertPlan': {
-      const existing=core.plans.find(item=>item.id===mutation.plan.id);ensure(!existing||existing.status!=='cancelled'||mutation.restoreCancelled===true,'已取消课程需明确恢复后才能重新排课',409);
+      const existing=core.plans.find(item=>item.id===mutation.plan.id);if(existing?.generatedBy==='commute')suppressCommute(core,existing);ensure(!existing||existing.status!=='cancelled'||mutation.restoreCancelled===true,'已取消课程需明确恢复后才能重新排课',409);
       ensure(mutation.plan.attendance===undefined,'出勤状态需使用 setAttendance 操作');
       const attendance=mutation.plan.attendance===undefined?existing?.attendance:mutation.plan.attendance;
-      const plan=validatePlan({...existing,...mutation.plan,id:mutation.plan.id||newId('plan'),status:existing?.status==='cancelled'?'planned':(mutation.plan.status||existing?.status||'planned'),manual:true,version:(existing?.version||0)+1,...(mutation.plan.sourceKey===undefined&&existing?.sourceKey?{sourceKey:existing.sourceKey}: {}),...(attendance===undefined?{}:{attendance})});
+      const plan=validatePlan({...existing,...mutation.plan,...(existing?.generatedBy==='commute'?{generatedBy:undefined,commuteEdges:undefined}:{}),id:mutation.plan.id||newId('plan'),status:existing?.status==='cancelled'?'planned':(mutation.plan.status||existing?.status||'planned'),manual:true,version:(existing?.version||0)+1,...(mutation.plan.sourceKey===undefined&&existing?.sourceKey?{sourceKey:existing.sourceKey}: {}),...(attendance===undefined?{}:{attendance})});
       assertCategory(core,plan.categoryId);
       if(attendance!==undefined){
         ensure(plan.categoryId==='class','带出勤标记的计划必须保持课程分类');
@@ -635,23 +647,27 @@ export function applyTimeMutation(snapshot:TimeSnapshot,mutation:TimeMutation,op
       ensure(plan.status!=='cancelled','已取消课程不能标记出勤');
       ensure(timestampMs(plan.end)<=now.getTime(),'课程尚未结束，不能标记出勤',409,{code:'TIME_ATTENDANCE_FUTURE'});
       plan.attendance=mutation.status;
+      delete plan.lateMinutes;
+      core=reconcileCourse(core,plan,now);
+      for(const source of core.sources)if(source.recordId===plan.id)source.manual=true;
       resultCorrection=correction(before,core,operationId,'setAttendance',stamp);
       break;
     }
     case 'cancelPlan': {
-      const plan=core.plans.find(item=>item.id===mutation.id);ensure(plan,'计划不存在',404);plan.status='cancelled';if(plan.sourceKey)addSource(core,{sourceKey:plan.sourceKey,kind:'plan',status:'cancelled',manual:true,recordId:plan.id,updatedAt:stamp});break;
+      const plan=core.plans.find(item=>item.id===mutation.id);ensure(plan,'计划不存在',404);if(plan.generatedBy==='commute')suppressCommute(core,plan);plan.status='cancelled';if(plan.categoryId==='class')core=reconcileCourse(core,plan,now);if(plan.sourceKey)addSource(core,{sourceKey:plan.sourceKey,kind:'plan',status:'cancelled',manual:true,recordId:plan.id,updatedAt:stamp});break;
     }
     case 'restore': {
       core=clone(mutation.snapshot);validateTimeCoreSnapshot(core);break;
     }
     default: throw new TimeValidationError('未知时间操作');
   }
+  if(!['undo','redo','restore','saveSemester'].includes(mutation.type)){core=reconcileCommutes(core,now);if(resultCorrection)resultCorrection=correction(before,core,operationId,mutation.type,stamp);}
   if(mutation.type==='import'){
     const importCorrection=accepted?.length?correction(before,core,operationId,'import',stamp):undefined;
     validateTimeCoreSnapshot(core,{now});
     return {snapshot:{...snapshot,...core,version:snapshot.version+1},correction:importCorrection,accepted,skipped};
   }
-  if(['rolloverCourses','migrateCourses','setCourseState'].includes(mutation.type)&&stable(before)===stable(core))return {snapshot:clone(snapshot),accepted,skipped};
+  if(['rolloverCourses','migrateCourses','setCourseState','applySemester'].includes(mutation.type)&&stable(before)===stable(core))return {snapshot:clone(snapshot),accepted,skipped};
   // Rollover is an automatic reconciliation pass. It still advances the
   // snapshot when it changes course data, but never becomes a user undo step.
   const changed=!['undo','redo','rolloverCourses'].includes(mutation.type);

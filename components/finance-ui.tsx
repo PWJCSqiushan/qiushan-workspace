@@ -373,6 +373,7 @@ function CategorySteps({
       </select>
       <select
         aria-label="消费小类"
+        required={!!one}
         value={two}
         disabled={!one}
         onChange={(e) => {
@@ -390,6 +391,7 @@ function CategorySteps({
       </select>
       <select
         aria-label="消费明细"
+        required={!!two}
         value={value || ''}
         disabled={!two}
         onChange={(e) => onChange(e.target.value || null)}

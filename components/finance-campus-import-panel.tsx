@@ -195,6 +195,7 @@ export function FinanceCampusImportPanel({
             ),
             meal = data.meals.find(
               (m) =>
+                m.status !== 'skipped' &&
                 !m.deleted &&
                 m.date ===
                   (Number.isFinite(Date.parse(r.occurredAt))
@@ -345,7 +346,11 @@ export function FinanceCampusImportPanel({
         if (
           mealId &&
           !state.meals.some(
-            (m) => m.id === mealId && !m.deleted && m.date === chartDay(when),
+            (m) =>
+              m.id === mealId &&
+              !m.deleted &&
+              m.status !== 'skipped' &&
+              m.date === chartDay(when),
           )
         )
           throw Error('关联餐次已变更，请重新选择');
@@ -355,6 +360,10 @@ export function FinanceCampusImportPanel({
             (m) => !m.deleted && m.date === chartDay(when) && m.meal === slot,
           );
           if (existing) {
+            if (existing.status === 'skipped')
+              throw Error(
+                '这餐已明确记为未用餐，请仅记录消费，或先到餐饮页修改餐次。',
+              );
             if (existing.placeId !== v.place)
               throw Error('当天已有不同主地点，请选择关联餐次或仅记录消费');
             mealId = existing.id;
@@ -830,6 +839,7 @@ export function FinanceCampusImportPanel({
                               {data.meals
                                 .filter(
                                   (m) =>
+                                    m.status !== 'skipped' &&
                                     !m.deleted &&
                                     m.date === review.time.slice(0, 10),
                                 )

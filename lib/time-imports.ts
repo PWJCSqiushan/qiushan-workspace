@@ -576,7 +576,7 @@ export function normalizeTimetable(
     }
     const segments = directStart && directEnd ? [{index:get('period')||directStart,start:directStart,end:directEnd}] : periodIndexes(get('period')).map(index=>periods!.find(p=>p.index===index)!);
     for(const segment of segments){
-      const sourceKey = 'timetable:'+fnv1a(source+':'+date+':'+segment.index);
+      const sourceKey = 'timetable:'+fnv1a(source+':'+date+':'+segment.index+':'+course+':'+get('note'));
       items.push({start:date+'T'+segment.start+':00'+TIME_OFFSET,end:date+'T'+segment.end+':00'+TIME_OFFSET,categoryId:'class',courseName:course,importSource:source,...(get('note')?{location:get('note')}:{}),...(typeof segment.index==='number'?{sourcePeriods:[segment.index]}:{}),note:[course,get('note')].filter(Boolean).join(' · '),sourceKey,kind:'plan'});
     }
   });

@@ -12,6 +12,10 @@ import {
   mealDefaultCategory,
   orderedMealAreas,
   mealExpenseRows,
+  mealPlaceTone,
+  mealPlaceTones,
+  mealSkipPreview,
+  skipMealMutation,
 } from '@/lib/finance-places';
 import { parseMoney } from '@/lib/finance-imports';
 import { FinanceReceiptPicker } from './finance-receipt-picker';
@@ -21,6 +25,7 @@ import {
   Field,
   amount,
   isoTime,
+  money,
   pathName,
   uid,
 } from './finance-ui';
@@ -84,10 +89,10 @@ export function FinanceMealEditor({
         '',
     ),
     [place, setPlace] = useState(old?.placeId || ''),
-    [companion, setCompanion] = useState<FinanceMeal['companions']>(
-      old?.companions || 'alone',
-    ),
-    [payment, setPayment] = useState<FinanceMeal['payment']>(
+    [companion, setCompanion] = useState<
+      NonNullable<FinanceMeal['companions']>
+    >(old?.companions || 'alone'),
+    [payment, setPayment] = useState<NonNullable<FinanceMeal['payment']>>(
       old?.payment || 'self',
     );
   const [channel, setChannel] = useState<Channel>(() => {
@@ -112,13 +117,20 @@ export function FinanceMealEditor({
     [adding, setAdding] = useState<'area' | 'venue'>(),
     [newName, setNewName] = useState(''),
     [ocrBusy, setOcrBusy] = useState(false);
+  const [skipConfirm, setSkipConfirm] = useState<{
+    mutation: Extract<FinanceMutation, { type: 'skipMeal' }>;
+    preview: ReturnType<typeof mealSkipPreview>;
+  }>();
+  const [newTone, setNewTone] =
+    useState<(typeof mealPlaceTones)[number]>('rose');
   const priceRef = useRef<HTMLInputElement>(null),
     children = locations.filter((p) => p.parentId === parent);
-  const mealValue: FinanceMeal = {
+  const mealValue: Exclude<FinanceMeal, { status: 'skipped' }> = {
     id: old?.id || 'draft',
     version: old?.version || 0,
     date,
     meal,
+    status: 'eaten',
     placeId: place,
     companions: companion,
     payment,
@@ -131,19 +143,23 @@ export function FinanceMealEditor({
       : customCategory;
   const areaGroups = [
     ...new Set(roots.map((p) => p.summaryGroupId || p.id)),
-  ].map((key, index) => ({
+  ].map((key) => ({
     key,
     name:
       roots.find((p) => (p.summaryGroupId || p.id) === key)!.summaryGroupName ||
       roots.find((p) => p.id === key)!.name,
     roots: roots.filter((p) => (p.summaryGroupId || p.id) === key),
-    tone: ['mint', 'amber', 'blue', 'rose'][index % 4],
+    tone: mealPlaceTone(
+      locations,
+      roots.find((p) => (p.summaryGroupId || p.id) === key)!.id,
+    ),
   }));
   const area = areaGroups.find((g) => g.roots.some((p) => p.id === parent));
   const chooseRoot = (id: string) => {
     setParent(id);
     setPlace('');
     setCustomCategory(undefined);
+    setSkipConfirm(undefined);
   };
   const addPlace = async () => {
     if (!newName.trim() || busy) return;
@@ -160,6 +176,7 @@ export function FinanceMealEditor({
           version: 0,
           name: newName.trim(),
           parentId: adding === 'venue' ? parent : null,
+          ...(adding === 'area' ? { tone: newTone } : {}),
         },
       });
       if (adding === 'area') chooseRoot(id);
@@ -169,6 +186,57 @@ export function FinanceMealEditor({
       }
       setAdding(undefined);
       setNewName('');
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const saveSkip = async (
+    mutation: Extract<FinanceMutation, { type: 'skipMeal' }>,
+  ) => {
+    if (busy || ocrBusy) return;
+    setBusy(true);
+    setError('');
+    try {
+      const result = await client.enqueue(mutation);
+      onSaved(result.message);
+      onClose();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const chooseSkipped = () => {
+    const draft: FinanceMeal = {
+      id: old?.id || uid('meal'),
+      version: old?.version || 0,
+      date,
+      meal,
+      note,
+      status: 'skipped',
+      pricePending: false,
+    };
+    const mutation = skipMealMutation(data, draft),
+      preview = mealSkipPreview(data, draft.id);
+    if (preview.expectedTransactions.length)
+      setSkipConfirm({ mutation, preview });
+    else void saveSkip(mutation);
+  };
+  const clearSkipped = async () => {
+    if (!old || busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      const result = await client.enqueue({
+        type: 'delete',
+        collection: 'meals',
+        id: old.id,
+        expectedVersion: old.version,
+      });
+      onSaved(result.message);
+      onClose();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -198,7 +266,11 @@ export function FinanceMealEditor({
       const m: FinanceMeal = {
         ...mealValue,
         id: old?.id || uid('meal'),
-        pricePending: hasPrice ? false : (old?.pricePending ?? true),
+        pricePending: hasPrice
+          ? false
+          : old?.status === 'skipped'
+            ? true
+            : (old?.pricePending ?? true),
       };
       const mutations: Exclude<FinanceMutation, { type: 'batch' }>[] = [
         {
@@ -304,7 +376,10 @@ export function FinanceMealEditor({
               type="date"
               required
               value={date}
-              onChange={(e) => setDate(e.target.value)}
+              onChange={(e) => {
+                setDate(e.target.value);
+                setSkipConfirm(undefined);
+              }}
             />
             <div className="f-segment">
               {Object.entries(mealNames).map(([key, name]) => (
@@ -312,13 +387,65 @@ export function FinanceMealEditor({
                   type="button"
                   key={key}
                   aria-pressed={meal === key}
-                  onClick={() => setMeal(key as FinanceMeal['meal'])}
+                  onClick={() => {
+                    setMeal(key as FinanceMeal['meal']);
+                    setSkipConfirm(undefined);
+                  }}
                 >
                   {name}
                 </button>
               ))}
             </div>
           </div>
+          <div className="f-meal-status">
+            {old?.status === 'skipped' && (
+              <span>这餐已记为未用餐，选餐厅可改回已用餐。</span>
+            )}
+            <button
+              type="button"
+              disabled={busy || ocrBusy || !date}
+              onClick={chooseSkipped}
+            >
+              这顿没吃
+            </button>
+            {old?.status === 'skipped' && (
+              <button type="button" disabled={busy} onClick={clearSkipped}>
+                清除，恢复未记录
+              </button>
+            )}
+          </div>
+          {skipConfirm && (
+            <section className="f-skip-confirm" aria-live="polite">
+              <b>这餐关联 {skipConfirm.preview.count} 笔消费</b>
+              <p>
+                实付 {money(skipConfirm.preview.paidCents)} · 本人承担{' '}
+                {money(skipConfirm.preview.personalCents)}（退款前）。
+              </p>
+              <p>
+                确认后记为未用餐，并解除{' '}
+                {skipConfirm.preview.expectedTransactions.length}{' '}
+                笔流水的餐次关联。消费、退款、AA
+                往来和用途分配全部保留，可一起撤销。
+              </p>
+              <div className="f-row">
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setSkipConfirm(undefined)}
+                >
+                  继续编辑
+                </button>
+                <button
+                  type="button"
+                  className="f-primary"
+                  disabled={busy}
+                  onClick={() => void saveSkip(skipConfirm.mutation)}
+                >
+                  保留账务，确认未用餐
+                </button>
+              </div>
+            </section>
+          )}
           <div className="f-quick-columns">
             <section className="f-quick-block f-quick-location">
               <h3>
@@ -375,6 +502,7 @@ export function FinanceMealEditor({
                     aria-pressed={place === p.id}
                     onClick={() => {
                       setPlace(p.id);
+                      setSkipConfirm(undefined);
                       setCustomCategory(undefined);
                       priceRef.current?.focus();
                     }}
@@ -416,6 +544,20 @@ export function FinanceMealEditor({
                       }}
                     />
                   </Field>
+                  {adding === 'area' && (
+                    <select
+                      aria-label="地点颜色"
+                      value={newTone}
+                      onChange={(e) =>
+                        setNewTone(e.target.value as typeof newTone)
+                      }
+                    >
+                      <option value="mint">薄荷绿</option>
+                      <option value="amber">暖杏色</option>
+                      <option value="blue">雾蓝色</option>
+                      <option value="rose">柔玫色</option>
+                    </select>
+                  )}
                   <button
                     type="button"
                     disabled={busy}
@@ -532,7 +674,9 @@ export function FinanceMealEditor({
                       aria-pressed={companion === key}
                       key={key}
                       onClick={() =>
-                        setCompanion(key as FinanceMeal['companions'])
+                        setCompanion(
+                          key as NonNullable<FinanceMeal['companions']>,
+                        )
                       }
                     >
                       {name}
@@ -551,7 +695,7 @@ export function FinanceMealEditor({
                       aria-pressed={payment === key}
                       key={key}
                       onClick={() => {
-                        setPayment(key as FinanceMeal['payment']);
+                        setPayment(key as NonNullable<FinanceMeal['payment']>);
                         setCustomCategory(undefined);
                       }}
                     >
@@ -566,7 +710,10 @@ export function FinanceMealEditor({
             aria-label="用餐备注"
             value={note}
             placeholder="备注（可不填）"
-            onChange={(e) => setNote(e.target.value)}
+            onChange={(e) => {
+              setNote(e.target.value);
+              setSkipConfirm(undefined);
+            }}
           />
           {error && (
             <p className="f-error" role="alert">

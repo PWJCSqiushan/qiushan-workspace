@@ -1,6 +1,6 @@
 import {localGet,localPut,localRemove,localList,localReplace} from './device-db.ts';
 export type TimeCategory={id:string;name:string;color:string;active:boolean};
-export type TimeInterval={id:string;start:string;end:string;categoryId:string;note:string;sourceKey?:string;manual?:boolean;estimated?:boolean;courseGroupKey?:string;generatedBy?:'course'};
+export type TimeInterval={id:string;start:string;end:string;categoryId:string;note:string;sourceKey?:string;manual?:boolean;estimated?:boolean;courseGroupKey?:string;generatedBy?:'course'|'commute';commuteEdges?:string[]};
 export type TimePlan=TimeInterval&{status:string;attendance?:'on_time'|'late_under_5'|'late_over_5'|'absent'|'excused';courseName?:string;location?:string;deliveryMode?:'in_person'|'online';lateMinutes?:number;originalPlanIds?:string[];sourcePeriods?:number[];importSource?:string};
 export type TimeSaveResult={state:'synced'|'queued';message:string};
 export type TimeCorrection={id:string;operationId?:string;createdAt?:string;kind?:string;undone?:boolean;redoInvalidated?:boolean;before?:unknown;after?:unknown};

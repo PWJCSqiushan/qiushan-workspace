@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { Plus, ChevronLeft, ChevronRight, ArrowUpRight } from 'lucide-react';
+import { Plus, ChevronLeft, ChevronRight } from 'lucide-react';
 import type { FinanceClient } from '@/lib/finance-client';
 import type { FinanceMeal } from '@/lib/finance-types';
 import { calculateFinanceStats } from '@/lib/finance-stats';
@@ -8,10 +8,11 @@ import {
   groupMealPlaces,
   mealPlaceGroup,
   mealNetCents,
+  mealPlaceTone,
+  mealPlaceColor,
   type MealPlaceLevel,
 } from '@/lib/finance-places';
 import { Empty, Panel, Ring, bounds, money, today } from './finance-ui';
-import { FinanceTransactionEditor } from './finance-transaction-editor';
 import { FinanceMealEditor } from './finance-meal-editor';
 const meals = { breakfast: '早餐', lunch: '午餐', dinner: '晚餐' } as const;
 const companions = {
@@ -39,12 +40,14 @@ export function FinanceMeals({
   onMessage,
   openQuick,
   onQuickClose,
+  onUnlinked,
 }: {
   client: FinanceClient;
   month: string;
   onMessage: (m: string) => void;
   openQuick: boolean;
   onQuickClose: () => void;
+  onUnlinked: (ids: string[], range: { from: string; to: string }) => void;
 }) {
   const data = client.data!,
     [anchor, setAnchor] = useState(today()),
@@ -57,7 +60,6 @@ export function FinanceMeals({
       meal: FinanceMeal['meal'];
       existing?: FinanceMeal;
     }>(),
-    [price, setPrice] = useState<FinanceMeal>(),
     [location, setLocation] = useState<string | null>(null);
   const weekday = (new Date(anchor + 'T00:00:00Z').getUTCDay() + 6) % 7,
     week = addDays(anchor, -weekday),
@@ -94,7 +96,9 @@ export function FinanceMeals({
         id: p.id,
         name: p.name,
         cents: measure === 'count' ? p.count : p.cents,
+        color: mealPlaceColor(data.places, p.id),
       }))
+      .filter((p) => measure !== 'count' || p.cents > 0)
       .sort((a, b) => b.cents - a.cents),
     sum = groups.reduce((s, g) => s + g.cents, 0);
   const open = (date: string, meal: FinanceMeal['meal']) =>
@@ -183,7 +187,7 @@ export function FinanceMeals({
         <Panel
           title="每一餐"
           action={
-            <span className="f-hint">点击空格记地点，点击已有餐编辑</span>
+            <span className="f-hint">点击记录或编辑 · 空白表示未记录</span>
           }
         >
           <div className="f-meal-grid">
@@ -223,11 +227,29 @@ export function FinanceMeals({
                       <div
                         key={k}
                         className={'f-meal-cell ' + (m ? 'has-meal' : '')}
+                        data-tone={
+                          m && m.status !== 'skipped'
+                            ? mealPlaceTone(data.places, m.placeId)
+                            : undefined
+                        }
+                        data-status={m?.status || (m ? 'eaten' : 'empty')}
                       >
                         <button
                           onClick={() => open(date, k)}
+                          title={
+                            m?.status === 'skipped'
+                              ? '未用餐 · 点击修改'
+                              : p?.name || '未记录 · 点击添加'
+                          }
                           aria-label={
-                            date + ' ' + meals[k] + (p ? ' ' + p.name : ' 添加')
+                            date +
+                            ' ' +
+                            meals[k] +
+                            (m?.status === 'skipped'
+                              ? ' 未用餐'
+                              : p
+                                ? ' ' + p.name
+                                : ' 未记录，添加')
                           }
                           disabled={
                             !!location &&
@@ -238,33 +260,33 @@ export function FinanceMeals({
                             ).id !== location
                           }
                         >
-                          {m ? (
+                          {m?.status === 'skipped' ? (
+                            <>
+                              <b>未用餐</b>
+                              <small>已明确记录 · 点击修改</small>
+                            </>
+                          ) : m ? (
                             <>
                               <b>{p?.name || '未命名地点'}</b>
+                              <span>
+                                {m.pricePending
+                                  ? '金额待补'
+                                  : payFor(m) === 0
+                                    ? '本人 ¥0.00'
+                                    : money(payFor(m))}
+                              </span>
                               <small>
                                 {companions[m.companions]} ·{' '}
                                 {payments[m.payment]}
                               </small>
-                              <span>
-                                {m.pricePending ? '金额待补' : money(payFor(m))}
-                              </span>
                             </>
                           ) : (
-                            <Plus />
+                            <>
+                              <Plus />
+                              <small>未记录</small>
+                            </>
                           )}
                         </button>
-                        {m && (
-                          <button
-                            className="f-meal-price"
-                            onClick={() => open(date, k)}
-                            title="补充一笔消费"
-                          >
-                            <span>
-                              {m.pricePending ? '补金额' : '追加消费'}
-                            </span>
-                            <ArrowUpRight />
-                          </button>
-                        )}
                       </div>
                     );
                   })}
@@ -322,11 +344,33 @@ export function FinanceMeals({
               </button>
             )}
             <p className="f-hint">
-              {stats.mealCount} 餐 · {new Set(active.map((m) => m.date)).size}{' '}
-              天 · {stats.pendingMealCount} 餐金额待补
+              {stats.mealCount} 餐 ·{' '}
+              {
+                new Set(
+                  active
+                    .filter((m) => m.status !== 'skipped')
+                    .map((m) => m.date),
+                ).size
+              }{' '}
+              天 · {stats.pendingMealCount} 餐金额待补 · 未用餐{' '}
+              {stats.skippedMealCount} 次
             </p>
           </Panel>
           <Panel title="地点小计">
+            {stats.unlinkedMealTransactionIds.length > 0 && (
+              <div className="f-unlinked-meals">
+                <b>含未关联餐次消费 {money(stats.unlinkedMealCents)}</b>
+                <span>这些消费计入地点金额，不增加餐数或用餐天数。</span>
+                <button
+                  className="f-text"
+                  onClick={() =>
+                    onUnlinked(stats.unlinkedMealTransactionIds, range)
+                  }
+                >
+                  查看 {stats.unlinkedMealTransactionIds.length} 笔流水 →
+                </button>
+              </div>
+            )}
             <div className="f-place-summary">
               <div>
                 <span>地点</span>
@@ -359,7 +403,9 @@ export function FinanceMeals({
                     {
                       new Set(
                         active
-                          .filter((m) => m.companions === k)
+                          .filter(
+                            (m) => m.status !== 'skipped' && m.companions === k,
+                          )
                           .map((m) => m.date),
                       ).size
                     }
@@ -374,7 +420,9 @@ export function FinanceMeals({
                     {
                       new Set(
                         active
-                          .filter((m) => m.payment === k)
+                          .filter(
+                            (m) => m.status !== 'skipped' && m.payment === k,
+                          )
                           .map((m) => m.date),
                       ).size
                     }
@@ -394,14 +442,6 @@ export function FinanceMeals({
             setEditor(undefined);
             onQuickClose();
           }}
-          onSaved={onMessage}
-        />
-      )}
-      {price && (
-        <FinanceTransactionEditor
-          client={client}
-          meal={data.meals.find((m) => m.id === price.id) || price}
-          onClose={() => setPrice(undefined)}
           onSaved={onMessage}
         />
       )}

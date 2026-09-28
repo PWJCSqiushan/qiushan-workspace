@@ -38,7 +38,10 @@ export type FinancePlace = FinanceBase & {
   defaultCategoryId?: string;
   summaryGroupId?: string;
   summaryGroupName?: string;
+  /** Stable area color. Shared summary-group roots must agree when specified. */
+  tone?: FinancePlaceTone;
 };
+export type FinancePlaceTone = 'mint' | 'amber' | 'blue' | 'rose';
 export type FinanceActivity = FinanceBase & {
   name: string;
   kind: 'event' | 'custody';
@@ -101,18 +104,30 @@ export type FinanceTransaction = FinanceBase & {
 export type FinanceMeal = FinanceBase & {
   date: string;
   meal: 'breakfast' | 'lunch' | 'dinner';
-  placeId: string;
-  companions:
-    | 'alone'
-    | 'classmates'
-    | 'friends'
-    | 'family'
-    | 'other'
-    | 'unknown';
-  payment: 'self' | 'aa' | 'treat' | 'invited' | 'unknown';
   note?: string;
-  pricePending: boolean;
-};
+} & (
+    | {
+        /** Missing status in older backups means eaten. */
+        status?: 'eaten';
+        placeId: string;
+        companions:
+          | 'alone'
+          | 'classmates'
+          | 'friends'
+          | 'family'
+          | 'other'
+          | 'unknown';
+        payment: 'self' | 'aa' | 'treat' | 'invited' | 'unknown';
+        pricePending: boolean;
+      }
+    | {
+        status: 'skipped';
+        placeId?: never;
+        companions?: never;
+        payment?: never;
+        pricePending: false;
+      }
+  );
 export type FinanceSponsorship = FinanceBase & {
   date?: string;
   name: string;
@@ -155,6 +170,13 @@ export type FinancePatch = {
   value: FinanceEntity | null;
 };
 export type FinanceMutation =
+  | {
+      type: 'skipMeal';
+      meal: Extract<FinanceMeal, { status: 'skipped' }>;
+      expectedVersion: number;
+      /** Exact previewed association set; guards both changed and new links. */
+      expectedTransactions: { id: string; version: number }[];
+    }
   | {
       type: 'put';
       collection: Exclude<FinanceCollection, 'transactions'>;
@@ -231,6 +253,9 @@ export type FinanceStats = {
   sponsorCents: number;
   mealCount: number;
   pendingMealCount: number;
+  skippedMealCount: number;
+  unlinkedMealCents: number;
+  unlinkedMealTransactionIds: string[];
   mealPlaces: {
     id: string;
     name: string;

@@ -3,6 +3,7 @@ import { useState } from 'react';
 import type { FinanceClient, PendingFinance } from '@/lib/finance-client';
 import type { FinanceEntity, FinanceMutation } from '@/lib/finance-types';
 import { Dialog, kinds, localTime, money, pathName } from './finance-ui';
+import { mealSkipPreview } from '@/lib/finance-places';
 const textValue = (value: unknown): string =>
   typeof value === 'string' ||
   typeof value === 'number' ||
@@ -90,6 +91,39 @@ export function FinanceConflictReview({
           只在确认后使用本机草稿重试。原草稿会保留；未改动的其他记录不会覆盖。
         </p>
         {flatten(pending.mutation).map((m, index) => {
+          if (m.type === 'skipMeal') {
+            const preview = mealSkipPreview(data, m.meal.id);
+            const current = data.meals.find((meal) => meal.id === m.meal.id);
+            return (
+              <section className="f-conflict-block" key={index}>
+                <h3>
+                  未用餐草稿 · {m.meal.date} ·{' '}
+                  {
+                    { breakfast: '早餐', lunch: '午餐', dinner: '晚餐' }[
+                      m.meal.meal
+                    ]
+                  }
+                </h3>
+                <p>
+                  原预览关联 {m.expectedTransactions.length} 笔流水，当前关联{' '}
+                  {preview.expectedTransactions.length} 笔流水。
+                </p>
+                <p>
+                  当前 {preview.count} 笔消费，实付 {money(preview.paidCents)}
+                  ，本人承担 {money(preview.personalCents)}（退款前）。
+                </p>
+                <p>
+                  最新餐次：{current?.date} ·{' '}
+                  {current?.status === 'skipped'
+                    ? '未用餐'
+                    : current?.deleted
+                      ? '已清除'
+                      : '已用餐'}
+                  。重试会保留全部最新账务，只解除餐次关联并保存以上草稿。
+                </p>
+              </section>
+            );
+          }
           if (!['put', 'saveTransaction', 'delete'].includes(m.type))
             return (
               <p key={index}>该操作需要先移出队列，再从最新界面重新执行。</p>
@@ -173,7 +207,10 @@ export function FinanceConflictReview({
           disabled={
             busy ||
             flatten(pending.mutation).some(
-              (m) => !['put', 'saveTransaction', 'delete'].includes(m.type),
+              (m) =>
+                !['put', 'saveTransaction', 'delete', 'skipMeal'].includes(
+                  m.type,
+                ),
             )
           }
           onClick={async () => {

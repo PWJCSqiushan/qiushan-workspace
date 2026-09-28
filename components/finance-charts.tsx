@@ -11,6 +11,7 @@ import type { FinanceState, FinanceStats } from '@/lib/finance-types';
 import type { CategoryLabelMode } from '@/lib/finance-category-codes';
 import { categoryLabel } from '@/lib/finance-category-codes';
 import { calculateFinanceStats } from '@/lib/finance-stats';
+import { mealPlaceTone } from '@/lib/finance-places';
 import {
   categoryChartModel,
   categoryPath,
@@ -742,14 +743,25 @@ function MealCalendar({
                 (m) => !m.deleted && m.date === date && m.meal === slot,
               );
               return (
-                <div className={meal ? 'has-meal' : ''} key={slot}>
+                <div
+                  className={meal ? 'has-meal' : ''}
+                  key={slot}
+                  data-status={meal?.status}
+                  data-tone={
+                    meal && meal.status !== 'skipped'
+                      ? mealPlaceTone(data.places, meal.placeId)
+                      : undefined
+                  }
+                >
                   <span>
-                    {meal
-                      ? data.places.find((p) => p.id === meal.placeId)?.name ||
-                        '地点未知'
-                      : '未记录'}
+                    {meal?.status === 'skipped'
+                      ? '未用餐'
+                      : meal
+                        ? data.places.find((p) => p.id === meal.placeId)
+                            ?.name || '地点未知'
+                        : '未记录'}
                   </span>
-                  {meal && (
+                  {meal && meal.status !== 'skipped' && (
                     <small>
                       {meal.pricePending
                         ? '金额待核对'

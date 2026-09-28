@@ -13,10 +13,14 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+import contextlib
 
 logging.disable(logging.CRITICAL)
 TZ = dt.timezone(dt.timedelta(hours=8))
-ROOT = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "QiushanWorkspace" / "garmin-cn"
+_INSTALLED = Path(__file__).resolve().parent
+ROOT = (Path(os.environ["QIUSHAN_GARMIN_ROOT"]) if os.environ.get("QIUSHAN_GARMIN_ROOT") else
+        _INSTALLED if _INSTALLED.name == "garmin-cn" else
+        Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "QiushanWorkspace" / "garmin-cn")
 
 def now():
     return dt.datetime.now(dt.timezone.utc)
@@ -108,20 +112,118 @@ def extract_sleep(payload, day):
     return items, issues
 
 def login(config):
-    token_store = Path(config.get("tokenStore") or ROOT / "tokenstore")
+    token_store = Path(config.get("tokenStore") or ROOT / "tokenstore").expanduser()
     if not token_store.exists():
         raise RuntimeError("reauth_required")
     Garmin = importlib.import_module("garminconnect").Garmin
     client = Garmin(is_cn=True, verify_login=True)
-    try:
-        status, _ = client.login(str(token_store))
+    with auth_lock():
+        try:
+            # The supported SDK refreshes expiring DI tokens on this path.
+            status, _ = client.login(str(token_store))
+        except Exception as exc:
+            raise RuntimeError(auth_error(exc)) from None
         if status is not None:
             raise RuntimeError("reauth_required")
-    except Exception as exc:
-        if "Authentication" in type(exc).__name__:
-            raise RuntimeError("reauth_required") from None
-        raise RuntimeError("garmin_connection_unavailable") from None
+        try:
+            client.client.dump(str(token_store))
+        except Exception:
+            raise RuntimeError("token_store_unavailable") from None
     return client
+
+def auth_error(exc):
+    name = type(exc).__name__
+    if "Authentication" in name or isinstance(exc, (FileNotFoundError, json.JSONDecodeError)):
+        return "reauth_required"
+    if "TooManyRequests" in name:
+        return "garmin_rate_limited"
+    return "garmin_connection_unavailable"
+
+@contextlib.contextmanager
+def auth_lock():
+    ROOT.mkdir(parents=True, exist_ok=True)
+    with (ROOT / "auth.lock").open("a+b") as handle:
+        if os.name == "nt":
+            import msvcrt
+            handle.seek(0)
+            if not handle.read(1):
+                handle.write(b"0")
+                handle.flush()
+            handle.seek(0)
+            try:
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            except OSError:
+                raise RuntimeError("auth_in_progress") from None
+        try:
+            yield
+        finally:
+            if os.name == "nt":
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+
+def authenticate(config, username, password, prompt_mfa):
+    """Interactive local credentials only; no password is persisted or printed."""
+    Garmin = importlib.import_module("garminconnect").Garmin
+    token_store = Path(config.get("tokenStore") or ROOT / "tokenstore").expanduser()
+    with auth_lock():
+        client = Garmin(username=username, password=password, is_cn=True,
+                        verify_login=True, prompt_mfa=prompt_mfa)
+        try:
+            status, _ = client.login()
+            if status is not None:
+                raise RuntimeError("reauth_required")
+        except RuntimeError as exc:
+            if str(exc) == "reauth_required":
+                raise
+            raise RuntimeError(auth_error(exc)) from None
+        except Exception as exc:
+            raise RuntimeError(auth_error(exc)) from None
+        finally:
+            client.password = None
+        try:
+            if not token_store.exists():
+                (token_store.parent if token_store.suffix else token_store).mkdir(parents=True, exist_ok=True)
+            client.client.dump(str(token_store))
+        except Exception:
+            raise RuntimeError("token_store_unavailable") from None
+    # The runner notices this timestamp and resumes without another credential prompt.
+    save(ROOT / "auth-status.json", {"status": "authenticated", "updatedAt": now().isoformat()})
+    return client
+
+_heartbeats = {}
+
+def heartbeat(config, state, error_code=None, request_id=None):
+    if not config.get("_syncEnabled", False):
+        return
+    key = (config.get("baseUrl"), config.get("connectionId"))
+    previous = _heartbeats.get(key)
+    clock = time.monotonic()
+    if previous and previous[1:] == (state, error_code, request_id) and clock - previous[0] < 60:
+        return
+    extra = {"state": state}
+    if error_code:
+        extra["errorCode"] = error_code if not error_code.startswith('website_http_') else 'unexpected_error'
+    if request_id:
+        extra["requestId"] = request_id
+    try:
+        api(config, "heartbeat", extra)
+        _heartbeats[key] = (clock, state, error_code, request_id)
+    except RuntimeError:
+        # A status delivery failure must never discard a pending commit.
+        pass
+
+def report_error(config, code):
+    state = ("reauth_required" if code == "reauth_required" else
+             "garmin_unavailable" if code in ("garmin_connection_unavailable", "garmin_rate_limited") else
+             "website_offline" if code == "website_offline" else "error")
+    heartbeat(config, state, code)
+
+def read_config(args):
+    config = load(Path(args.config), {})
+    config["_syncEnabled"] = bool(args.sync)
+    if getattr(args, "base_url", None):
+        config["baseUrl"] = args.base_url
+    return config
 
 def api(config, action, extra=None):
     base = config.get("baseUrl", "").rstrip("/")
@@ -130,6 +232,16 @@ def api(config, action, extra=None):
         raise RuntimeError("invalid_target")
     if parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise RuntimeError("invalid_target")
+    handlers = []
+    # Optional local proxy affects only website requests, never Garmin login.
+    proxy = config.get("websiteProxy")
+    if proxy:
+        proxy_url = urllib.parse.urlsplit(proxy)
+        if (proxy_url.scheme != "http" or proxy_url.hostname not in ("127.0.0.1", "localhost", "::1")
+                or proxy_url.username or proxy_url.password or proxy_url.path not in ("", "/")
+                or proxy_url.query or proxy_url.fragment or not proxy_url.port):
+            raise RuntimeError("invalid_target")
+        handlers.append(urllib.request.ProxyHandler({"https": proxy, "http": proxy}))
     body = {"space": config.get("space", "personal"), "connectionId": config.get("connectionId"), "token": config.get("websiteToken"), **(extra or {})}
     request = urllib.request.Request(base + "/api/time/garmin/" + action,
         data=json.dumps(body).encode(), headers={"Content-Type": "application/json", "User-Agent": "QiushanWorkspace-GarminSync/1.0"}, method="POST")
@@ -138,7 +250,7 @@ def api(config, action, extra=None):
         def redirect_request(self, *args):
             return None
     try:
-        with urllib.request.build_opener(NoRedirect).open(request, timeout=45) as response:
+        with urllib.request.build_opener(NoRedirect, *handlers).open(request, timeout=45) as response:
             return json.loads(response.read(200000))
     except urllib.error.HTTPError as exc:
         raise RuntimeError("website_conflict" if exc.code == 409 else
@@ -147,11 +259,16 @@ def api(config, action, extra=None):
         raise RuntimeError("website_offline") from None
 
 def fetch(config, first, last):
+    heartbeat(config, "reading")
     client = login(config)
     items, days = [], []
     for offset in range((last - first).days + 1):
         day = (first + dt.timedelta(days=offset)).isoformat()
-        raw = client.get_sleep_data(day)
+        try:
+            raw = client.get_sleep_data(day)
+        except Exception as exc:
+            raise RuntimeError(auth_error(exc)) from None
+        heartbeat(config, "reading")
         # Health payload only in user's private local runtime directory.
         save(ROOT / "sleep-days" / (day + ".json"), raw)
         batch, issues = extract_sleep(raw, day)
@@ -165,15 +282,18 @@ def fetch(config, first, last):
     return preview
 
 def sync_once(args, force=False):
-    config = load(Path(args.config), {})
+    config = read_config(args)
     state_path = Path(args.state_file)
     state = load(state_path, {})
     if (ROOT / "paused").exists():
         return {"status": "paused"}
     pull = api(config, "pull") if args.sync else {}
+    if pull.get("requestId"):
+        heartbeat(config, "reading", request_id=pull["requestId"])
     if args.watch and not force and not state.get("pendingCommit") and pull.get("status") != "queued":
         last_run = timestamp(state.get("lastSuccessAt"))
         if last_run and (now() - last_run).total_seconds() < args.watch * 60:
+            heartbeat(config, "idle")
             return {"status": "idle", "lastSuccessAt": state.get("lastSuccessAt")}
     pending = state.get("pendingCommit")
     if state.get("conflict") and not args.retry_conflict:
@@ -205,6 +325,7 @@ def sync_once(args, force=False):
         state.update({"pendingCommit": pending, "pendingThrough": last.isoformat()})
         save(state_path, state)
     try:
+        heartbeat(config, "syncing")
         result = api(config, "commit", pending)
     except RuntimeError as exc:
         if str(exc) == "website_conflict":
@@ -216,12 +337,14 @@ def sync_once(args, force=False):
     state.pop("pendingCommit", None)
     state.pop("conflict", None)
     save(state_path, state)
+    heartbeat(config, "idle")
     return {"status": "synced", "through": state["lastSyncedDate"], **result}
 
 def parser():
     p = argparse.ArgumentParser(description="Garmin 中国区只读睡眠同步")
     p.add_argument("--config", default=str(ROOT / "config.json"))
     p.add_argument("--state-file", default=str(ROOT / "state.json"))
+    p.add_argument("--base-url", default="", help="覆盖目标站点；不写入配置")
     p.add_argument("--history-from", default="")
     p.add_argument("--history-to", default="")
     p.add_argument("--dry-run", action="store_true")
@@ -247,21 +370,29 @@ def main():
             msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
         except OSError:
             raise SystemExit("同步器已在运行")
+    (ROOT / "watch.pid").write_text(str(os.getpid()), encoding="ascii")
     first = True
+    failures = 0
     while True:
         try:
             result = sync_once(args, first)
+            failures = 0
         except Exception as exc:
             allowed = {"reauth_required", "invalid_target", "website_conflict", "website_conflict_review_required",
-                       "website_token_revoked", "website_offline", "invalid_date_range", "garmin_connection_unavailable"}
-            code = str(exc) if str(exc) in allowed or str(exc).startswith("website_http_") else type(exc).__name__
+                       "website_token_revoked", "website_offline", "invalid_date_range", "garmin_connection_unavailable",
+                       "auth_in_progress", "garmin_rate_limited", "token_store_unavailable"}
+            code = str(exc) if str(exc) in allowed or str(exc).startswith("website_http_") else "local_sync_error"
             result = {"status": "error", "code": code}
+            failures += 1
+            with contextlib.suppress(Exception):
+                report_error(read_config(args), code)
         save(ROOT / "sync-status.json", {**result, "updatedAt": now().isoformat()})
         print(json.dumps(result, ensure_ascii=False), flush=True)
         if not args.watch:
             return 1 if result["status"] == "error" else 0
         first = False
-        time.sleep(30)
+        # Keep request pickup fast when healthy; bound retries during outages.
+        time.sleep(min(300, 30 * (2 ** min(max(failures - 1, 0), 4))))
 
 if __name__ == "__main__":
     raise SystemExit(main())

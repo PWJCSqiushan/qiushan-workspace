@@ -156,20 +156,10 @@ function loadVendorScript(src: string, ready: () => boolean): Promise<void> {
   return promise;
 }
 
-function globalXlsx(): XlsxGlobal | undefined {
-  return (globalThis as unknown as {XLSX?: XlsxGlobal}).XLSX;
-}
-
 async function parseXlsxInBrowser(file: File, options: Parameters<typeof normalizeTimetable>[1]) {
-  await loadVendorScript('/vendor/xlsx.full.min.js', () => Boolean(globalXlsx()));
-  const xlsx = globalXlsx();
-  if (!xlsx) throw new Error('未加载 SheetJS；请检查 /vendor/xlsx.full.min.js');
-  const workbook = xlsx.read(await file.arrayBuffer(), {type: 'array'});
-  const sheetName = workbook.SheetNames[0];
-  if (!sheetName) throw new Error('Excel 文件没有工作表');
-  const rows = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], {header: 1, raw: false, defval: ''});
-  if (!Array.isArray(rows)) throw new Error('Excel 工作表无法转换为行');
-  return normalizeTimetable(rows as readonly (readonly unknown[])[], options);
+  if(/\.xls$/i.test(file.name))throw new Error('请先将旧 XLS 格式另存为 XLSX');
+  const {readSheet}=await import('read-excel-file/browser');
+  return normalizeTimetable(await readSheet(file), options);
 }
 
 async function readImageRaster(file: Blob): Promise<{width: number; height: number; rgba: Uint8ClampedArray}> {

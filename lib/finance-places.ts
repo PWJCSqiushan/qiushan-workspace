@@ -1,11 +1,77 @@
 import type {
   FinanceMeal,
   FinancePlace,
+  FinancePlaceTone,
+  FinanceMutation,
   FinanceState,
   FinanceStats,
 } from './finance-types.ts';
 
 export type MealPlaceLevel = 'area' | 'floor' | 'venue';
+
+export const mealPlaceTones: FinancePlaceTone[] = [
+  'mint',
+  'amber',
+  'blue',
+  'rose',
+];
+/** Stable across sorting, filtering and insertion; IDs, never private names. */
+export function mealPlaceTone(
+  places: FinancePlace[],
+  placeId: string,
+): FinancePlaceTone {
+  const groupId = placeId.startsWith('group:') ? placeId.slice(6) : undefined;
+  const place = places.find((p) => p.id === placeId);
+  const root = places.find((p) => p.id === (place?.parentId || placeId));
+  const group = groupId || root?.summaryGroupId;
+  const configured = group
+    ? places
+        .filter((p) => !p.parentId && p.summaryGroupId === group && p.tone)
+        .sort((a, b) => a.id.localeCompare(b.id))[0]?.tone
+    : root?.tone;
+  if (configured) return configured;
+  const key = group ? 'group:' + group : root?.id || placeId;
+  let hash = 2166136261;
+  for (const char of key) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
+  return mealPlaceTones[(hash >>> 0) % mealPlaceTones.length];
+}
+export function mealPlaceColor(places: FinancePlace[], placeId: string) {
+  return `var(--meal-${mealPlaceTone(places, placeId)})`;
+}
+export function mealSkipPreview(data: FinanceState, mealId?: string) {
+  const linked = data.transactions.filter(
+    (t) => !t.deleted && t.mealId === mealId && !!mealId,
+  );
+  const expenses = linked.filter((t) => t.kind === 'expense');
+  return {
+    count: expenses.length,
+    paidCents: expenses.reduce((sum, t) => sum + t.amountCents, 0),
+    personalCents: expenses.reduce(
+      (sum, t) => sum + (t.personalCents ?? t.amountCents),
+      0,
+    ),
+    expectedTransactions: linked.map((t) => ({ id: t.id, version: t.version })),
+  };
+}
+export function skipMealMutation(
+  data: FinanceState,
+  meal: FinanceMeal,
+): Extract<FinanceMutation, { type: 'skipMeal' }> {
+  return {
+    type: 'skipMeal',
+    expectedVersion: meal.version,
+    meal: {
+      id: meal.id,
+      version: meal.version,
+      date: meal.date,
+      meal: meal.meal,
+      note: meal.note,
+      status: 'skipped',
+      pricePending: false,
+    },
+    expectedTransactions: mealSkipPreview(data, meal.id).expectedTransactions,
+  };
+}
 
 /** A shared reporting group combines areas without changing the quick-entry hierarchy. */
 export function mealPlaceGroup(
@@ -33,6 +99,7 @@ export function groupMealPlaces(
   const result = new Map<string, FinanceStats['mealPlaces'][number]>(),
     dates = new Map<string, Set<string>>();
   for (const meal of meals) {
+    if (meal.deleted || meal.status === 'skipped') continue;
     const { id } = mealPlaceGroup(places, meal.placeId, level),
       days = dates.get(id) || new Set<string>();
     days.add(meal.date);
@@ -53,6 +120,12 @@ export function groupMealPlaces(
 }
 
 export function mealNetCents(data: FinanceState, mealId: string) {
+  if (
+    data.meals.some(
+      (m) => m.id === mealId && (m.deleted || m.status === 'skipped'),
+    )
+  )
+    return 0;
   const expenses = data.transactions.filter(
       (t) => !t.deleted && t.kind === 'expense' && t.mealId === mealId,
     ),
@@ -77,7 +150,7 @@ export function mealDefaultCategory(
   data: FinanceState,
   meal?: FinanceMeal,
 ): string | null {
-  if (!meal) return null;
+  if (!meal || meal.status === 'skipped') return null;
   if (meal.payment === 'treat')
     return (
       data.categories.find(
@@ -121,7 +194,10 @@ export function orderedMealAreas(places: FinancePlace[]) {
 }
 
 export function mealExpenseRows(data: FinanceState, mealId?: string) {
-  return mealId
+  return mealId &&
+    !data.meals.some(
+      (m) => m.id === mealId && (m.deleted || m.status === 'skipped'),
+    )
     ? data.transactions.filter(
         (t) => !t.deleted && t.kind === 'expense' && t.mealId === mealId,
       )

@@ -211,7 +211,11 @@ export class FinanceStore {
     space: FinanceSpace,
     mutation: FinanceMutation,
   ): Promise<FinanceState> {
-    if (['undo', 'redo'].includes(mutation.type)) return this.snapshot(space);
+    if (
+      ['undo', 'redo'].includes(mutation.type) ||
+      this.flatten(mutation).some((m) => m.type === 'skipMeal')
+    )
+      return this.snapshot(space);
     const observedVersion = await this.version(space);
     const ms = this.flatten(mutation),
       ids = new Set<string>(),
@@ -241,7 +245,7 @@ export class FinanceStore {
       (m) =>
         m.type === 'delete' ||
         (m.type === 'put' &&
-          ['accounts', 'categories', 'places', 'activities'].includes(
+          ['accounts', 'categories', 'places', 'activities', 'meals'].includes(
             m.collection,
           )),
     );

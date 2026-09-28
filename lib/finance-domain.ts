@@ -514,6 +514,7 @@ function validateCategoryDirectory(categories: FinanceCategory[]): void {
 function validatePlaceDirectory(places: FinancePlace[]): void {
   const ids = new Set<string>();
   const groupNames = new Map<string, string>();
+  const groupTones = new Map<string, string>();
   for (const place of places) {
     requireId(place.id, 'place.id');
     assert(
@@ -522,6 +523,21 @@ function validatePlaceDirectory(places: FinancePlace[]): void {
     );
     assert(!ids.has(place.id), `duplicate place id: ${place.id}`);
     ids.add(place.id);
+    if (place.tone !== undefined) {
+      assert(
+        ['mint', 'amber', 'blue', 'rose'].includes(place.tone),
+        'place tone is invalid',
+      );
+      assert(place.parentId === null, 'place tone belongs to the root area');
+      if (place.summaryGroupId) {
+        assert(
+          !groupTones.has(place.summaryGroupId) ||
+            groupTones.get(place.summaryGroupId) === place.tone,
+          'summary group tones must match',
+        );
+        groupTones.set(place.summaryGroupId, place.tone);
+      }
+    }
     if (place.brand !== undefined)
       assert(
         typeof place.brand === 'string' &&
@@ -876,7 +892,10 @@ function validateTransactionShape(
     requireId(transaction.mealId, `transaction ${transaction.id}.mealId`);
     assert(
       state.meals.some(
-        (meal) => meal.id === transaction.mealId && !meal.deleted,
+        (meal) =>
+          meal.id === transaction.mealId &&
+          !meal.deleted &&
+          meal.status !== 'skipped',
       ),
       `transaction ${transaction.id} references an unknown meal`,
     );
@@ -1135,6 +1154,25 @@ export function validateFinanceState(state: FinanceState): void {
     requireId(meal.id, 'meal.id');
     dateKey(meal.date);
     assert(MEALS.has(meal.meal), `meal ${meal.id} meal is invalid`);
+    assert(
+      meal.status === undefined ||
+        meal.status === 'eaten' ||
+        meal.status === 'skipped',
+      `meal ${meal.id} status is invalid`,
+    );
+    if (meal.status === 'skipped') {
+      assert(
+        meal.pricePending === false,
+        `skipped meal ${meal.id} cannot have pricePending`,
+      );
+      assert(
+        meal.placeId === undefined &&
+          meal.payment === undefined &&
+          meal.companions === undefined,
+        `skipped meal ${meal.id} cannot have dining details`,
+      );
+      continue;
+    }
     assert(
       state.places.some((place) => place.id === meal.placeId && !place.deleted),
       `meal ${meal.id} references an unknown place`,
@@ -1495,10 +1533,7 @@ function ensureEntityCollection(
       validateActivity(entity as FinanceActivity);
       break;
     case 'meals':
-      assert(
-        'date' in entity && 'meal' in entity && 'placeId' in entity,
-        'entity is not a meal',
-      );
+      assert('date' in entity && 'meal' in entity, 'entity is not a meal');
       validateBase(entity, 'meal');
       break;
     case 'sponsorships':
@@ -1570,7 +1605,7 @@ function applyPut(
       .concat(category);
     validateCategoryDirectory(categories);
   }
-  if (mutation.collection === 'places') {
+  if (mutation.collection === 'places' && !options.deferStateValidation) {
     const places = state.places
       .filter((item) => item.id !== incoming.id)
       .concat(incoming as FinancePlace);
@@ -1606,7 +1641,10 @@ function applyPut(
       `sponsorship ${sponsorship.id} category is unknown`,
     );
   }
-  if (mutation.collection === 'meals') {
+  if (
+    mutation.collection === 'meals' &&
+    (incoming as FinanceMeal).status !== 'skipped'
+  ) {
     const meal = incoming as FinanceMeal;
     dateKey(meal.date);
     assert(MEALS.has(meal.meal), `meal ${meal.id} meal is invalid`);
@@ -1820,12 +1858,68 @@ function applyConfigure(
   return patches;
 }
 
+function applySkipMeal(
+  state: FinanceState,
+  mutation: Extract<FinanceMutation, { type: 'skipMeal' }>,
+  options: ApplyOptions,
+): FinancePatch[] {
+  assert(
+    mutation.meal.status === 'skipped' && !mutation.meal.deleted,
+    'skipMeal requires an active skipped meal',
+  );
+  checkExpectedVersion(
+    state,
+    'meals',
+    mutation.meal.id,
+    mutation.expectedVersion,
+  );
+  const linked = state.transactions.filter(
+    (t) => !t.deleted && t.mealId === mutation.meal.id,
+  );
+  const expected = mutation.expectedTransactions;
+  assert(
+    Array.isArray(expected) &&
+      expected.length === linked.length &&
+      new Set(expected.map((t) => t.id)).size === expected.length &&
+      linked.every((t) =>
+        expected.some((e) => e.id === t.id && e.version === t.version),
+      ),
+    'version conflict: meal associations changed; preview again',
+  );
+  // Only the meal association and entity revision change. Preserve postings,
+  // refund origins, AA relationships, allocations and every financial field.
+  const patches: FinancePatch[] = linked.map((t) => {
+    const detached = {
+      ...t,
+      version: addFinanceCents(t.version, 1, 'transaction version'),
+    };
+    delete detached.mealId;
+    state.transactions[state.transactions.indexOf(t)] = detached;
+    return { collection: 'transactions', id: t.id, value: clone(detached) };
+  });
+  patches.push(
+    applyPut(
+      state,
+      {
+        type: 'put',
+        collection: 'meals',
+        entity: mutation.meal,
+        expectedVersion: mutation.expectedVersion,
+      },
+      options,
+    ),
+  );
+  return patches;
+}
+
 function applyOne(
   state: FinanceState,
   mutation: DomainMutation,
   options: ApplyOptions = {},
 ): FinancePatch[] {
   switch (mutation.type) {
+    case 'skipMeal':
+      return applySkipMeal(state, mutation, options);
     case 'put':
       return [applyPut(state, mutation, options)];
     case 'saveTransaction':
@@ -1878,6 +1972,10 @@ export function applyFinanceMutation(
     case 'put':
       changes = applyOne(next, mutation);
       label = `更新${mutation.collection}`;
+      break;
+    case 'skipMeal':
+      changes = applyOne(next, mutation);
+      label = '标记未用餐（保留账务）';
       break;
     case 'saveTransaction':
       changes = applyOne(next, mutation);

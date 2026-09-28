@@ -5,6 +5,10 @@ import { Download, FileUp, Plus, Search, Trash2, X } from 'lucide-react';
 import type { FinanceClient } from '@/lib/finance-client';
 import type { FinanceTransaction } from '@/lib/finance-types';
 import {
+  transactionEditBatch,
+  transactionPersonalCents,
+} from '@/lib/finance-transaction-edits';
+import {
   CategoryPicker,
   Dialog,
   Empty,
@@ -45,6 +49,12 @@ export function FinanceTransactions({
     [selected, setSelected] = useState<string[]>([]),
     [removing, setRemoving] = useState<FinanceTransaction>(),
     [classify, setClassify] = useState(false),
+    [targets, setTargets] = useState<FinanceTransaction[]>([]),
+    [editCategory, setEditCategory] = useState(true),
+    [editMerchant, setEditMerchant] = useState(false),
+    [merchant, setMerchant] = useState(''),
+    [editNote, setEditNote] = useState(false),
+    [note, setNote] = useState(''),
     [category, setCategory] = useState<string | null>(null),
     [busy, setBusy] = useState(false),
     [error, setError] = useState('');
@@ -92,31 +102,20 @@ export function FinanceTransactions({
     };
   const bulk = async () =>
     run(async () => {
-      if (
-        selection.some(
-          (t) => t.kind !== 'expense' || t.allocations.length !== 1,
-        )
-      )
-        throw new Error('批量归类只适用于单用途消费，多用途请逐笔编辑');
-      for (let i = 0; i < selection.length; i += 10) {
-        await client.enqueue({
-          type: 'batch',
-          mutations: selection.slice(i, i + 10).map((t) => ({
-            type: 'saveTransaction',
-            expectedVersion: t.version,
-            transaction: {
-              ...t,
-              allocations: t.allocations.map((a) => ({
-                ...a,
-                categoryId: category,
-              })),
-            },
-          })),
-        });
-      }
+      const result = await client.enqueue(
+        transactionEditBatch(targets, {
+          ...(editCategory ? { categoryId: category } : {}),
+          ...(editMerchant ? { counterparty: merchant } : {}),
+          ...(editNote ? { note } : {}),
+        }),
+      );
       setClassify(false);
       setSelected([]);
-      onMessage('分类已更新，可撤销');
+      onMessage(
+        result.state === 'queued'
+          ? result.message
+          : '批量修改已保存，可整批撤销',
+      );
     });
   return (
     <>
@@ -176,9 +175,35 @@ export function FinanceTransactions({
           <b>已选 {selection.length} 笔</b>
           <span>
             本人承担{' '}
-            {money(selection.reduce((s, t) => s + (t.personalCents || 0), 0))}
+            {money(
+              selection.reduce(
+                (s, t) =>
+                  s +
+                  transactionPersonalCents(t) * (t.kind === 'refund' ? -1 : 1),
+                0,
+              ),
+            )}
           </span>
-          <button onClick={() => setClassify(true)}>修改主分类</button>
+          <button
+            onClick={() => {
+              setTargets(structuredClone(selection));
+              setError('');
+              setCategory(null);
+              setEditCategory(
+                selection.some(
+                  (t) =>
+                    t.kind === 'expense' && transactionPersonalCents(t) > 0,
+                ),
+              );
+              setEditMerchant(false);
+              setMerchant('');
+              setEditNote(false);
+              setNote('');
+              setClassify(true);
+            }}
+          >
+            批量修改
+          </button>
           <button className="f-text" onClick={() => setSelected([])}>
             取消选择
           </button>
@@ -254,7 +279,10 @@ export function FinanceTransactions({
                         ? t.allocations
                             .map((a) => pathName(data.categories, a.categoryId))
                             .join('；')
-                        : t.note || '不计个人消费'}
+                        : t.kind === 'expense' &&
+                            transactionPersonalCents(t) > 0
+                          ? '待分类'
+                          : t.note || '不计个人消费'}
                     </small>
                   </td>
                   <td>
@@ -266,7 +294,7 @@ export function FinanceTransactions({
                     <strong>
                       {['expense', 'refund'].includes(t.kind)
                         ? money(
-                            (t.personalCents || 0) *
+                            transactionPersonalCents(t) *
                               (t.kind === 'refund' ? -1 : 1),
                           )
                         : '—'}
@@ -340,47 +368,154 @@ export function FinanceTransactions({
       )}
       {classify && (
         <Dialog
-          title="批量分类预览"
+          title="批量修改预览"
           onClose={() => setClassify(false)}
           busy={busy}
         >
-          <div className="f-dialog-body">
-            <p>
-              将更改 {selection.length} 笔已选消费的用途，合计{' '}
-              {money(selection.reduce((s, t) => s + (t.personalCents || 0), 0))}
-              。
-            </p>
-            <CategoryPicker
-              categories={data.categories}
-              value={category}
-              onChange={setCategory}
-            />
-            <ul className="f-preview-list">
-              {selection.map((t) => (
-                <li key={t.id}>
-                  {t.counterparty || t.note || '未命名'} ·{' '}
-                  {money(t.personalCents || 0)}
-                  <small>
-                    {t.allocations
-                      .map((a) => pathName(data.categories, a.categoryId))
-                      .join('；')}{' '}
-                    → {pathName(data.categories, category)}
-                  </small>
-                </li>
-              ))}
-            </ul>
-            {error && <p className="f-error">{error}</p>}
-          </div>
-          <footer>
-            <button onClick={() => setClassify(false)}>取消</button>
-            <button
-              className="f-primary"
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!busy) void bulk();
+            }}
+          >
+            <fieldset
               disabled={busy}
-              onClick={() => void bulk()}
+              style={{
+                border: 0,
+                padding: 0,
+                margin: 0,
+                minWidth: 0,
+                minHeight: 0,
+                display: 'flex',
+                flexDirection: 'column',
+              }}
             >
-              确认分类修改
-            </button>
-          </footer>
+              <div className="f-dialog-body">
+                <p>
+                  已选 {targets.length} 笔流水。仅修改勾选字段，一次最多 50
+                  笔，可整批撤销。
+                </p>
+                <label className="f-check">
+                  <input
+                    type="checkbox"
+                    checked={editCategory}
+                    onChange={(e) => setEditCategory(e.target.checked)}
+                  />
+                  修改消费用途
+                </label>
+                {editCategory && (
+                  <>
+                    <p className="f-hint">
+                      适用{' '}
+                      {
+                        targets.filter(
+                          (t) =>
+                            t.kind === 'expense' &&
+                            transactionPersonalCents(t) > 0,
+                        ).length
+                      }{' '}
+                      笔消费。多用途的每项分类统一修改，保留原拆分金额及内容；退款统计跟随原消费。其他资金性质的用途不变。
+                    </p>
+                    <CategoryPicker
+                      categories={data.categories}
+                      value={category}
+                      onChange={setCategory}
+                    />
+                  </>
+                )}
+                <label className="f-check">
+                  <input
+                    type="checkbox"
+                    checked={editMerchant}
+                    onChange={(e) => setEditMerchant(e.target.checked)}
+                  />
+                  修改商家 / 对方（全部已选流水）
+                </label>
+                {editMerchant && (
+                  <input
+                    aria-label="批量商家 / 对方"
+                    value={merchant}
+                    onChange={(e) => setMerchant(e.target.value)}
+                    placeholder="留空将清除原商家 / 对方"
+                  />
+                )}
+                <label className="f-check">
+                  <input
+                    type="checkbox"
+                    checked={editNote}
+                    onChange={(e) => setEditNote(e.target.checked)}
+                  />
+                  修改备注（全部已选流水）
+                </label>
+                {editNote && (
+                  <textarea
+                    aria-label="批量备注"
+                    value={note}
+                    onChange={(e) => setNote(e.target.value)}
+                    placeholder="替换原备注，留空将清除"
+                    rows={2}
+                  />
+                )}
+                <ul className="f-preview-list">
+                  {targets.map((t) => (
+                    <li key={t.id}>
+                      {t.counterparty || t.note || '未命名'} ·{' '}
+                      {money(t.amountCents)} · {kinds[t.kind]}
+                      <small>
+                        {editCategory &&
+                        t.kind === 'expense' &&
+                        transactionPersonalCents(t) > 0 ? (
+                          <>
+                            {t.allocations
+                              .map((a) =>
+                                pathName(data.categories, a.categoryId),
+                              )
+                              .join('；') || '待分类'}{' '}
+                            → {pathName(data.categories, category)}
+                          </>
+                        ) : (
+                          '用途保持原样'
+                        )}
+                      </small>
+                      {editMerchant && (
+                        <small>
+                          对方：{t.counterparty || '空'} →{' '}
+                          {merchant.trim() || '清空'}
+                        </small>
+                      )}
+                      {editNote && (
+                        <small>
+                          备注：{t.note || '空'} → {note.trim() || '清空'}
+                        </small>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+                {targets.length > 50 && (
+                  <p className="f-error">
+                    请关闭面板，将选择范围缩小至 50 笔以内。尚未修改任何流水。
+                  </p>
+                )}
+                {error && <p className="f-error">{error}</p>}
+              </div>
+              <footer>
+                <button type="button" onClick={() => setClassify(false)}>
+                  取消
+                </button>
+                <button
+                  className="f-primary"
+                  type="submit"
+                  disabled={
+                    busy ||
+                    targets.length > 50 ||
+                    (!editCategory && !editMerchant && !editNote)
+                  }
+                >
+                  确认批量修改
+                </button>
+              </footer>
+            </fieldset>
+          </form>
         </Dialog>
       )}
     </>

@@ -21,7 +21,7 @@ export async function timeRoute(request:Request){try{return await timeRouteInter
 async function timeRouteInternal(request:Request){
   const {identity}=await import('./auth.ts');const {env}=await import('cloudflare:workers');const path=new URL(request.url).pathname;let user;
   try{user=await identity(request);}catch(error){
-    if(!path.startsWith('/api/time/garmin')||!['pull','commit'].some(action=>path.endsWith('/'+action)))throw error;
+    if(!path.startsWith('/api/time/garmin')||!['pull','commit','heartbeat'].some(action=>path.endsWith('/'+action)))throw error;
     let payload:Record<string,unknown>={};try{payload=await body(request.clone() as unknown as Request) as Record<string,unknown>;}catch{throw error;}
     assertGarminTokenRoute(request,payload);
     const token=payload.token;if(typeof token!=='string'||!token)throw error;
@@ -31,7 +31,7 @@ async function timeRouteInternal(request:Request){
   return handleTimeRequest(request,new TimeStore(env.DB,user.owner));
 }
 
-export function assertGarminTokenRoute(request:Request,payload:Record<string,unknown>){const action=new URL(request.url).pathname.split('/').at(-1);if(request.method!=='POST'||!['pull','commit'].includes(action||'')||(payload.action!==undefined&&payload.action!==action))throw new AppError('Garmin 令牌不允许此操作',403);}
+export function assertGarminTokenRoute(request:Request,payload:Record<string,unknown>){const action=new URL(request.url).pathname.split('/').at(-1);if(request.method!=='POST'||!['pull','commit','heartbeat'].includes(action||'')||(payload.action!==undefined&&payload.action!==action))throw new AppError('Garmin 令牌不允许此操作',403);}
 
 function routeParts(request:Request){return new URL(request.url).pathname.split('/').filter(Boolean).slice(2);}
 
@@ -67,16 +67,27 @@ async function handleGarminRequest(request:Request,store:TimeStore,path:string[]
   if(selected==='token')return json(await store.createGarminConnection(space));
   const connectionId=typeof input.connectionId==='string'&&input.connectionId?input.connectionId:undefined;
   if(selected==='revoke'){return json(await store.revokeGarmin(space,connectionId));}
+  if(selected==='heartbeat'){
+    if(typeof input.token!=='string'||!input.token)throw new AppError('缺少 Garmin 连接令牌',401);
+    const verified=await store.verifyGarmin(space,connectionId,input.token);if(!verified.scopes.includes('time:import'))throw new AppError('Garmin 令牌权限无效',403);
+    const states:Record<string,string>={idle:'online',reading:'running',syncing:'running',reauth_required:'reauth',garmin_unavailable:'error',website_offline:'offline',error:'error'};
+    if(typeof input.state!=='string'||!states[input.state])throw new AppError('同步器状态无效');
+    if(input.requestId!==undefined){if(typeof input.requestId!=='string')throw new AppError('同步请求标识无效');if(['reading','syncing'].includes(input.state))await store.verifyGarminRequest(space,verified.connectionId,input.requestId);}
+    await store.heartbeatGarmin(space,verified.connectionId,states[input.state],typeof input.errorCode==='string'?input.errorCode:undefined);
+    const status=await store.garminStatus(space,verified.connectionId);return json({status:'ok',heartbeatAt:status.heartbeatAt});
+  }
   if(selected==='pull'){
     if(typeof input.token!=='string'||!input.token)throw new AppError('缺少 Garmin 连接令牌',401);
     const verified=await store.verifyGarmin(space,connectionId,input.token);if(!verified.scopes.includes('time:import'))throw new AppError('Garmin 令牌权限无效',403);
-    const current=await store.snapshot(space,"summary");const status=await store.garminStatus(space,verified.connectionId);return json({status:status.pendingRequest?'queued':'idle',connectionId:verified.connectionId,baseVersion:current.version,requestedAt:status.pendingRequest?.requestedAt||null,lastSyncAt:'lastSyncAt' in status?status.lastSyncAt||null:null,requestId:status.pendingRequest?.id||null},200);
+    await store.heartbeatGarmin(space,verified.connectionId,typeof input.helperStatus==='string'?input.helperStatus:'online',typeof input.errorCode==='string'?input.errorCode:undefined,input.claim===true);
+    const current=await store.snapshot(space,"summary");const status=await store.garminStatus(space,verified.connectionId);return json({status:status.pendingRequest?'queued':'idle',requestStatus:status.pendingRequest?.status||null,connectionId:verified.connectionId,baseVersion:current.version,requestedAt:status.pendingRequest?.requestedAt||null,lastSyncAt:'lastSyncAt' in status?status.lastSyncAt||null:null,requestId:status.pendingRequest?.id||null},200);
   }
   if(selected==='commit'){
     if(typeof input.token!=='string'||!input.token)throw new AppError('缺少 Garmin 连接令牌',401);
     if(typeof input.operationId!=='string'||typeof input.baseVersion!=='number'||!Number.isSafeInteger(input.baseVersion)||(input.requestId!=null&&typeof input.requestId!=='string'))throw new AppError('Garmin 提交必须携带 operationId 和 baseVersion');
     const verified=await store.verifyGarmin(space,connectionId,input.token);if(!verified.scopes.includes('time:import'))throw new AppError('Garmin 令牌权限无效',403);if(!Array.isArray(input.items)||input.items.length>500)throw new AppError('Garmin 睡眠批次无效');
     const items=(input.items as ImportCandidate[]).map(item=>{if(item.kind!=='actual'||item.categoryId!=='sleep'||!item.sourceKey||!item.sourceKey.startsWith('garmin:'))throw new AppError('Garmin 只允许导入睡眠实际区间');return item;});
+    if(typeof input.requestId==='string')await store.verifyGarminRequest(space,verified.connectionId,input.requestId);
     const envelope:TimeMutationEnvelope={space,operationId:operationId(input.operationId),baseVersion:input.baseVersion,mutation:{type:'import',items,source:'garmin-cn',replace:false}};const result=await store.mutate(envelope);await store.markGarminSync(space,verified.connectionId,typeof input.requestId==='string'?input.requestId:undefined);const resultRecord=result as {operationId?:string;version?:number;snapshot?:{imports?:{accepted?:number;skipped?:number}[]}};const imported=resultRecord.snapshot?.imports?.at(-1);return json({status:'imported',connectionId:verified.connectionId,operationId:resultRecord.operationId,version:resultRecord.version,accepted:imported?.accepted??0,skipped:imported?.skipped??0},200);
   }
   return json({error:'Garmin 操作不存在'},404);

@@ -320,6 +320,15 @@ export default function FinancePage() {
           )}
           {tab === 'meals' && (
             <FinanceMeals
+              onUnlinked={(ids, range) =>
+                drill({
+                  view: 'all',
+                  id: '',
+                  name: '未关联餐次消费（含退款）',
+                  range,
+                  transactionIds: ids,
+                })
+              }
               client={client!}
               month={month}
               onMessage={setMessage}

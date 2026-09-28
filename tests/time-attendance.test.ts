@@ -14,15 +14,15 @@ function op(baseVersion:number,operationId:string,mutation:unknown){
 }
 
 function relativeIso(minutes:number){
-  return new Date(Date.now()+minutes*60_000).toISOString();
+  return new Date(Date.parse('2026-09-20T12:00:00+08:00')+minutes*60_000).toISOString();
 }
 
 function planItem(sourceKey:string,startMinutes:number,endMinutes:number){
   return {
     kind:'plan' as const,
     categoryId:'class',
-    start:relativeIso(startMinutes),
-    end:relativeIso(endMinutes),
+    start:startMinutes>0?new Date(Date.now()+startMinutes*60000).toISOString():relativeIso(startMinutes),
+    end:endMinutes>0?new Date(Date.now()+endMinutes*60000).toISOString():relativeIso(endMinutes),
     sourceKey,
   };
 }
@@ -36,9 +36,9 @@ void test('出勤状态支持多计划保存、重读、更新，并保护导入
   ];
   const imported=await store.mutate(op(0,'attendance-import',{type:'import',source:'timetable',items}));
   const first=await store.snapshot('personal');
-  assert.equal(first.plans.length,3);
+  assert.equal(first.plans.filter(p=>p.categoryId==='class').length,3);
   assert.equal(first.intervals.length,0);
-  assert.equal(new Set(first.plans.map(plan=>plan.id)).size,3);
+  assert.equal(new Set(first.plans.filter(p=>p.categoryId==='class').map(plan=>plan.id)).size,3);
   const past1=first.plans.find(plan=>plan.sourceKey===items[0].sourceKey)!;
   const past2=first.plans.find(plan=>plan.sourceKey===items[1].sourceKey)!;
   const future=first.plans.find(plan=>plan.sourceKey===items[2].sourceKey)!;
@@ -68,7 +68,7 @@ void test('出勤状态支持多计划保存、重读、更新，并保护导入
   const repullSnapshot=await store.snapshot('personal');
   assert.equal((repull as {skipped?:unknown}).skipped,undefined);
   assert.equal(repullSnapshot.plans.find(plan=>plan.id===past1.id)?.attendance,'late_under_5');
-  assert.equal(repullSnapshot.plans.length,3);
+  assert.equal(repullSnapshot.plans.filter(p=>p.categoryId==='class').length,3);
   assert.equal(repullSnapshot.imports.at(-1)?.skipped,1);
   assert.equal(repullSnapshot.plans.find(plan=>plan.id===future.id)?.attendance,undefined);
   void imported;void confirmed;void second;void updated;
@@ -88,12 +88,12 @@ void test('出勤状态只允许已结束的课程，非法状态和非课程会
   snapshot=await store.snapshot('personal');
   await store.mutate(op(snapshot.version,'mark-ended',{type:'setAttendance',id:ended.id,status:'on_time'}));
   snapshot=await store.snapshot('personal');
-  await assert.rejects(()=>store.mutate(op(snapshot.version,'retime-labeled-future',{type:'upsertPlan',plan:{id:ended.id,start:relativeIso(60),end:relativeIso(120),categoryId:'class'}})),/未来/);
+  await assert.rejects(()=>store.mutate(op(snapshot.version,'retime-labeled-future',{type:'upsertPlan',plan:{id:ended.id,start:new Date(Date.now()+3600000).toISOString(),end:new Date(Date.now()+7200000).toISOString(),categoryId:'class'}})),/未来/);
   snapshot=await store.snapshot('personal');
   await assert.rejects(()=>store.mutate(op(snapshot.version,'retag-labeled-study',{type:'upsertPlan',plan:{id:ended.id,start:ended.start,end:ended.end,categoryId:'study'}})),/课程分类/);
   const final=await store.snapshot('personal');
   assert.equal(final.plans.find(plan=>plan.id===ended.id)?.attendance,'on_time');
-  assert.equal(final.intervals.length,0);
+  assert.equal(final.intervals.filter(p=>p.categoryId==='class').length,1);
   assert.equal((imported.snapshot as {intervals:unknown[]}).intervals.length,0);
 });
 

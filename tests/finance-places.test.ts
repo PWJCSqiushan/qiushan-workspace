@@ -34,7 +34,7 @@ const places: FinancePlace[] = [
   { id: 'cafe-a', version: 1, name: '同名餐厅', parentId: 'floor-a' },
   { id: 'cafe-b', version: 1, name: '同名餐厅', parentId: 'floor-b' },
 ];
-const meals: FinanceMeal[] = [
+const meals: Exclude<FinanceMeal, { status: 'skipped' }>[] = [
   ['m1', '2026-09-01', 'lunch', 'cafe-a'],
   ['m2', '2026-09-01', 'dinner', 'cafe-b'],
   ['m3', '2026-09-02', 'lunch', 'cafe-b'],
@@ -52,7 +52,7 @@ const rows = [
   { id: 'cafe-a', name: '同名餐厅', count: 1, days: 1, cents: 1200 },
   { id: 'cafe-b', name: '同名餐厅', count: 2, days: 2, cents: 2600 },
 ];
-test('shared building totals sum meals and money but deduplicate dates across floors', () => {
+void test('shared building totals sum meals and money but deduplicate dates across floors', () => {
   assert.deepEqual(groupMealPlaces(places, rows, meals, 'area'), [
     { id: 'group:building', name: '示例楼', count: 3, days: 2, cents: 3800 },
   ]);
@@ -64,7 +64,7 @@ test('shared building totals sum meals and money but deduplicate dates across fl
     ['cafe-a', 'cafe-b'],
   );
 });
-test('meal classification inherits explicit default while a treat remains a conscious purpose choice', () => {
+void test('meal classification inherits explicit default while a treat remains a conscious purpose choice', () => {
   const state = emptyFinanceState();
   state.places = places;
   state.categories = [
@@ -85,7 +85,7 @@ test('meal classification inherits explicit default while a treat remains a cons
   nested.places[2].parentId = 'cafe-b';
   assert.throws(() => validateFinanceState(nested), /two levels/);
 });
-test('meal cell price follows the same cross-month refund boundary as its statistics', () => {
+void test('meal cell price follows the same cross-month refund boundary as its statistics', () => {
   const state = emptyFinanceState();
   state.transactions = [
     {
@@ -114,7 +114,7 @@ test('meal cell price follows the same cross-month refund boundary as its statis
   assert.equal(mealNetCents(state, 'm1'), 1300);
 });
 
-test('new meal never selects unrelated expenses with no meal link', () => {
+void test('new meal never selects unrelated expenses with no meal link', () => {
   const state = emptyFinanceState();
   state.transactions = [
     {

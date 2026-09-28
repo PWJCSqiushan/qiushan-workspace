@@ -7,7 +7,7 @@ import {
   categoryLabel,
   type CategoryLabelMode,
 } from './finance-category-codes.ts';
-import { mealPlaceGroup } from './finance-places.ts';
+import { mealPlaceGroup, mealPlaceColor } from './finance-places.ts';
 
 export const chartDay = (iso: string) =>
   new Date(Date.parse(iso) + 28800000).toISOString().slice(0, 10);
@@ -188,12 +188,16 @@ export function mealChartGroups(
 ) {
   const meals = data.meals.filter(
     (m) =>
+      m.status !== 'skipped' &&
       !m.deleted &&
       m.date >= stats.from &&
       m.date < stats.to &&
       (slot === 'all' || m.meal === slot),
   );
-  const groups = new Map<string, { id: string; name: string; cents: number }>();
+  const groups = new Map<
+    string,
+    { id: string; name: string; cents: number; color: string }
+  >();
   for (const row of stats.mealPlaces) {
     const place = data.places.find((p) => p.id === row.id);
     const group =
@@ -204,7 +208,11 @@ export function mealChartGroups(
             row.id,
             level === 'area' ? 'area' : 'venue',
           );
-    const g = groups.get(group.id) || { ...group, cents: 0 };
+    const g = groups.get(group.id) || {
+      ...group,
+      cents: 0,
+      color: mealPlaceColor(data.places, level === 'brand' ? group.id : row.id),
+    };
     g.cents += measure === 'count' ? row.count : row.cents;
     groups.set(group.id, g);
   }

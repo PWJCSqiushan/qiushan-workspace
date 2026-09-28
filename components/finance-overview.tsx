@@ -44,6 +44,7 @@ export type FinanceFilter = {
   id: string;
   name: string;
   range?: { from: string; to: string };
+  transactionIds?: string[];
 };
 export function expenseDate(t: FinanceTransaction, data: FinanceState) {
   const original =
@@ -58,6 +59,11 @@ export function matchesFinance(
   data: FinanceState,
 ) {
   if (!f) return true;
+  if (f.transactionIds)
+    return (
+      f.transactionIds.includes(t.id) ||
+      (t.kind === 'refund' && f.transactionIds.includes(t.relatedId || ''))
+    );
   if (
     f.view === 'purpose' &&
     f.id === 'unclassified' &&
