@@ -1178,9 +1178,16 @@ export function validateFinanceState(state: FinanceState): void {
       `meal ${meal.id} references an unknown place`,
     );
     assert(
-      ['alone', 'classmates', 'friends', 'family', 'other', 'unknown'].includes(
-        meal.companions,
-      ),
+      [
+        'alone',
+        'classmates',
+        'friends',
+        'friendsF',
+        'friendsL',
+        'family',
+        'other',
+        'unknown',
+      ].includes(meal.companions),
       `meal ${meal.id} companions is invalid`,
     );
     assert(

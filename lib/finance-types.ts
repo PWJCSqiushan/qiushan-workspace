@@ -114,6 +114,8 @@ export type FinanceMeal = FinanceBase & {
           | 'alone'
           | 'classmates'
           | 'friends'
+          | 'friendsF'
+          | 'friendsL'
           | 'family'
           | 'other'
           | 'unknown';

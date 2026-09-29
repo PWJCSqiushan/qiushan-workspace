@@ -11,6 +11,7 @@ import type { FinanceState, FinanceStats } from '@/lib/finance-types';
 import type { CategoryLabelMode } from '@/lib/finance-category-codes';
 import { categoryLabel } from '@/lib/finance-category-codes';
 import { calculateFinanceStats } from '@/lib/finance-stats';
+import { mealSocialGroups } from '@/lib/finance-meal-social';
 import { mealPlaceTone } from '@/lib/finance-places';
 import {
   categoryChartModel,
@@ -349,46 +350,67 @@ export function FinanceCharts({
           {mealCalendar ? (
             <MealCalendar data={data} range={range} />
           ) : (
-            <div className="f-chart-workspace">
-              <MealChart
-                data={data}
-                range={range}
-                config={prefs.mealCards[0]}
-                measure={prefs.measure}
-                main
-                onChange={(config) =>
-                  changePrefs({
-                    ...prefs,
-                    mealCards: prefs.mealCards.map((c, i) =>
-                      i === 0 ? config : c,
-                    ),
-                  })
-                }
-              />
-              <div className="f-chart-slots">
-                {prefs.mealCards.slice(1).map((config, i) => (
-                  <MealChart
-                    key={i}
-                    data={data}
-                    range={range}
-                    config={config}
-                    measure={prefs.measure}
-                    onChange={(next) =>
-                      changePrefs({
-                        ...prefs,
-                        mealCards: prefs.mealCards.map((c, j) =>
-                          j === i + 1 ? next : c,
-                        ),
-                      })
-                    }
-                  />
-                ))}
-              </div>
+            <div className="f-meal-six-grid" aria-label="餐饮六图概览">
+              {prefs.mealCards.map((config, i) => (
+                <MealChart
+                  key={i}
+                  data={data}
+                  range={range}
+                  config={config}
+                  measure={prefs.measure}
+                  main={i === 0}
+                  onChange={(next) =>
+                    changePrefs({
+                      ...prefs,
+                      mealCards: prefs.mealCards.map((c, j) =>
+                        j === i ? next : c,
+                      ),
+                    })
+                  }
+                />
+              ))}
+              <MealSocialChart data={data} range={range} kind="companions" />
+              <MealSocialChart data={data} range={range} kind="payments" />
             </div>
           )}
         </>
       )}
     </div>
+  );
+}
+
+function MealSocialChart({
+  data,
+  range,
+  kind,
+}: {
+  data: FinanceState;
+  range: ChartRange;
+  kind: 'companions' | 'payments';
+}) {
+  const groups = mealSocialGroups(
+    data.meals.filter((m) => m.date >= range.from && m.date < range.to),
+  );
+  return (
+    <Panel
+      title={kind === 'companions' ? '和谁吃' : '怎么结算'}
+      className="f-chart-mini f-meal-social-card"
+      action={<span className="f-hint">按餐数 · 三餐合计</span>}
+    >
+      <Ring
+        groups={groups[kind].filter((g) => g.cents > 0)}
+        total={groups.total}
+        unit="餐数"
+      />
+      <div className="f-chart-foot">
+        <span>
+          {kind === 'companions'
+            ? '朋友 F / L / 其他分开统计'
+            : '自付 / AA / 请客分开统计'}
+        </span>
+        <span>未用餐不计入</span>
+      </div>
+    </Panel>
   );
 }
 

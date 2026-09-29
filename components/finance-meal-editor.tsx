@@ -17,6 +17,7 @@ import {
   mealSkipPreview,
   skipMealMutation,
 } from '@/lib/finance-places';
+import { mealCompanionNames } from '@/lib/finance-meal-social';
 import { parseMoney } from '@/lib/finance-imports';
 import { FinanceReceiptPicker } from './finance-receipt-picker';
 import {
@@ -30,14 +31,7 @@ import {
   uid,
 } from './finance-ui';
 const mealNames = { breakfast: '早餐', lunch: '午餐', dinner: '晚餐' } as const;
-const companionNames = {
-  unknown: '同伴未注明',
-  alone: '独自',
-  classmates: '同学',
-  friends: '朋友',
-  family: '家人',
-  other: '其他',
-} as const;
+const companionNames = mealCompanionNames;
 const paymentNames = {
   unknown: '结算待核对',
   self: '我付自己',

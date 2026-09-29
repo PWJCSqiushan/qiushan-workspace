@@ -1099,3 +1099,127 @@
     font-size: clamp(16px, 16cqh, 24px);
   }
 }
+/* Six equally weighted meal charts; only long legends scroll inside their card. */
+.finance-app .f-meal-six-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.finance-app .f-meal-six-grid > .f-panel {
+  padding: 14px;
+  min-width: 0;
+}
+.finance-app .f-meal-six-grid > :nth-child(1) {
+  order: 0;
+}
+.finance-app .f-meal-six-grid > :nth-child(5) {
+  order: 1;
+}
+.finance-app .f-meal-six-grid > :nth-child(6) {
+  order: 2;
+}
+.finance-app .f-meal-six-grid > :nth-child(2) {
+  order: 3;
+}
+.finance-app .f-meal-six-grid > :nth-child(3) {
+  order: 4;
+}
+.finance-app .f-meal-six-grid > :nth-child(4) {
+  order: 5;
+}
+.finance-app .f-meal-six-grid .f-panel-head {
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.finance-app .f-meal-six-grid .f-panel-head h2 {
+  font-size: 16px;
+  color: var(--f-ink);
+}
+.finance-app .f-meal-six-grid select {
+  min-height: 30px;
+  font-size: 12px;
+  padding: 4px 6px;
+  max-width: 115px;
+}
+.finance-app .f-meal-six-grid .f-ring-wrap {
+  display: grid;
+  grid-template-columns: minmax(86px, 0.85fr) minmax(0, 1.4fr);
+  flex: 1;
+  min-height: 0;
+  gap: 10px;
+}
+.finance-app .f-meal-six-grid .f-donut-visual {
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  max-width: 180px;
+  max-height: 100%;
+  align-self: center;
+}
+.finance-app .f-meal-six-grid .f-donut-center strong {
+  font-size: clamp(18px, 1.7vw, 28px);
+}
+.finance-app .f-meal-six-grid .f-donut-center small {
+  display: block;
+  font-size: 10px;
+}
+.finance-app .f-meal-six-grid .f-ring-legend {
+  width: 100%;
+  min-height: 0;
+  max-height: 100%;
+  overflow: auto;
+}
+.finance-app .f-meal-six-grid .f-ring-legend button {
+  min-height: 23px;
+  padding: 2px 0;
+  gap: 5px;
+}
+.finance-app .f-meal-six-grid .f-ring-legend button span {
+  font-size: 13px;
+  line-height: 1.25;
+}
+.finance-app .f-meal-six-grid .f-ring-legend button b {
+  font-size: 12px;
+}
+.finance-app .f-meal-six-grid .f-ring-legend button span small {
+  display: inline;
+  margin-left: 4px;
+  font-size: 10px;
+}
+.finance-app .f-meal-six-grid .f-chart-foot {
+  font-size: 10px;
+  min-height: 18px;
+  gap: 4px;
+  margin-top: 6px;
+}
+@media (min-width: 1500px) and (min-height: 900px) {
+  .finance-app .f-meal-six-grid .f-ring-legend button {
+    min-height: 30px;
+  }
+  .finance-app .f-meal-six-grid .f-ring-legend button span {
+    font-size: 16px;
+  }
+  .finance-app .f-meal-six-grid .f-ring-legend button b {
+    font-size: 14px;
+  }
+  .finance-app .f-meal-six-grid .f-ring-legend button span small {
+    font-size: 12px;
+  }
+}
+@media (max-width: 900px) {
+  .finance-app .f-meal-six-grid {
+    flex: none;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: none;
+    grid-auto-rows: minmax(240px, auto);
+  }
+}
+@media (max-width: 600px) {
+  .finance-app .f-meal-six-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

@@ -3,6 +3,11 @@ import { useEffect, useState } from 'react';
 import { Plus, ChevronLeft, ChevronRight } from 'lucide-react';
 import type { FinanceClient } from '@/lib/finance-client';
 import type { FinanceMeal } from '@/lib/finance-types';
+import {
+  mealCompanionNames,
+  mealPaymentNames,
+  mealSocialGroups,
+} from '@/lib/finance-meal-social';
 import { calculateFinanceStats } from '@/lib/finance-stats';
 import {
   groupMealPlaces,
@@ -15,21 +20,8 @@ import {
 import { Empty, Panel, Ring, bounds, money, today } from './finance-ui';
 import { FinanceMealEditor } from './finance-meal-editor';
 const meals = { breakfast: '早餐', lunch: '午餐', dinner: '晚餐' } as const;
-const companions = {
-  unknown: '同伴未注明',
-  alone: '独自',
-  classmates: '同学',
-  friends: '朋友',
-  family: '家人',
-  other: '其他',
-} as const;
-const payments = {
-  unknown: '结算待核对',
-  self: '自付',
-  aa: 'AA',
-  treat: '我请客',
-  invited: '别人请客',
-} as const;
+const companions = mealCompanionNames;
+const payments = mealPaymentNames;
 const addDays = (date: string, n: number) =>
   new Date(Date.parse(date + 'T00:00:00Z') + n * 86400000)
     .toISOString()
@@ -76,6 +68,7 @@ export function FinanceMeals({
         m.date < range.to &&
         (filter === 'all' || m.meal === filter),
     );
+  const social = mealSocialGroups(active);
   const days = Array.from(
     {
       length:
@@ -185,12 +178,19 @@ export function FinanceMeals({
       </div>
       <div className="f-meals-layout">
         <Panel
+          className="f-meal-calendar-panel"
           title="每一餐"
           action={
             <span className="f-hint">点击记录或编辑 · 空白表示未记录</span>
           }
         >
-          <div className="f-meal-grid">
+          <section
+            className="f-meal-grid"
+            aria-label="每日餐饮记录"
+            // Keyboard users need to focus this independently scrolling region.
+            // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+            tabIndex={0}
+          >
             <div className="f-meal-grid-head">
               <span>日期</span>
               {Object.entries(meals)
@@ -292,9 +292,15 @@ export function FinanceMeals({
                   })}
               </div>
             ))}
-          </div>
+          </section>
         </Panel>
-        <div className="f-side-stack">
+        <section
+          className="f-side-stack f-meal-insights"
+          aria-label="餐饮统计"
+          // Keyboard users need to focus this independently scrolling region.
+          // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+          tabIndex={0}
+        >
           <Panel
             title="吃在哪里"
             action={
@@ -394,45 +400,20 @@ export function FinanceMeals({
               天数按地点独立去重；一天去多个地方会分别出现，不能相加。
             </p>
           </Panel>
-          <Panel title="和谁、怎么结算">
-            <div className="f-meal-social">
-              {(['classmates', 'friends'] as const).map((k) => (
-                <span key={k}>
-                  {companions[k]}同餐
-                  <b>
-                    {
-                      new Set(
-                        active
-                          .filter(
-                            (m) => m.status !== 'skipped' && m.companions === k,
-                          )
-                          .map((m) => m.date),
-                      ).size
-                    }
-                    <small>天</small>
-                  </b>
-                </span>
-              ))}
-              {(['treat', 'invited'] as const).map((k) => (
-                <span key={k}>
-                  {payments[k]}
-                  <b>
-                    {
-                      new Set(
-                        active
-                          .filter(
-                            (m) => m.status !== 'skipped' && m.payment === k,
-                          )
-                          .map((m) => m.date),
-                      ).size
-                    }
-                    <small>天</small>
-                  </b>
-                </span>
-              ))}
-            </div>
+          <Panel title="和谁吃">
+            <Ring groups={social.companions} total={social.total} unit="餐数" />
+            <p className="f-hint">
+              按已记录用餐餐数统计，含同伴未注明；未用餐不计入。旧朋友记录计入朋友[其他]，可逐餐改为
+              F 或 L。
+            </p>
           </Panel>
-        </div>
+          <Panel title="怎么结算">
+            <Ring groups={social.payments} total={social.total} unit="餐数" />
+            <p className="f-hint">
+              自付、AA、我请客、别人请客分别统计；结算待核对独立显示。“独自吃”属于同伴分类。
+            </p>
+          </Panel>
+        </section>
       </div>
       {(editor || quick) && (
         <FinanceMealEditor

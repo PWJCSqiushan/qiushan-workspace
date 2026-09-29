@@ -1006,6 +1006,50 @@
   grid-template-columns: minmax(0, 1.85fr) minmax(280px, 1fr);
   gap: 18px;
 }
+.f-meal-insights > .f-panel {
+  flex-shrink: 0;
+}
+@media (min-width: 901px) {
+  .f-content-meals {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .f-content-meals > .f-section-toolbar {
+    flex-shrink: 0;
+  }
+  .f-content-meals .f-meals-layout {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .f-meal-calendar-panel {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .f-meal-calendar-panel > .f-panel-head {
+    flex-shrink: 0;
+  }
+  .f-meal-calendar-panel .f-meal-grid {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+  }
+  .f-meal-calendar-panel .f-meal-grid-head {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--f-panel);
+  }
+  .f-meal-calendar-panel .f-meal-grid,
+  .f-meal-insights {
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+  }
+}
 .f-meal-grid-head,
 .f-meal-day {
   display: grid;
