@@ -348,6 +348,7 @@ function App() {
   const [jobsSeen, setJobsSeen] = useState<Job[]>([])
   const draftHydratedRef = useRef(false)
   const epochRef = useRef(0)
+  const busyRef = useRef<{ epoch: number; space: Space; owner: string; label: string } | null>(null)
   const flushingOutboxRef = useRef(false)
   const versionRef = useRef(0)
   const versionSpaceRef = useRef<Space>(space)
@@ -505,6 +506,8 @@ function App() {
     if (!ready) return
     const epoch = ++epochRef.current
     const controller = new AbortController()
+    busyRef.current = null
+    setBusy('')
     setLoading(true)
     setError('')
     setNotice('')
@@ -604,6 +607,7 @@ function App() {
     }, 5 * 60 * 1000)
     return () => { live = false; window.clearInterval(timer) }
   }, [space, Boolean(data), instrumentIds.join('|'), owner])
+  useEffect(() => { window.scrollTo({ top: 0, behavior: 'auto' }) }, [tab])
   useEffect(() => {
     if (tab !== 'assets' || !recordFocus) return
     document.getElementById('actual-record')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -622,6 +626,7 @@ function App() {
   const marketReports = reports.filter(r => r.report_type === 'market' && !r.instrument_id).sort(newestFirst)
   const diagnosisReports = reports.filter(r => r.report_type === 'diagnosis' && r.instrument_id === selected).sort(newestFirst)
   const jobActive = jobsSeen.some(j => isActiveJob(j.status))
+  const selectedAdvice = [...(data?.advice?.holdings || []), ...(data?.advice?.watchlist || [])].find(row => row.instrument_id === selected)
   const importFile = (target: 'report' | 'history') => (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (!file) return
@@ -631,11 +636,18 @@ function App() {
     event.target.value = ''
   }
   const act = async (label: string, task: () => Promise<void>) => {
+    const targetEpoch = epochRef.current
+    const targetSpace = spaceRef.current
+    const targetOwner = ownerRef.current
+    const lock = { epoch: targetEpoch, space: targetSpace, owner: targetOwner, label }
+    if (busyRef.current && busyRef.current.epoch === targetEpoch && busyRef.current.space === targetSpace && busyRef.current.owner === targetOwner) return
+    busyRef.current = lock
+    const isCurrent = () => targetEpoch === epochRef.current && spaceRef.current === targetSpace && ownerRef.current === targetOwner
     setBusy(label); setError(''); setNotice('')
     try { await task() }
     catch (e) {
-      if (isAbortRequest(e)) return
-      persistDraft()
+      if (!isCurrent() || isAbortRequest(e)) return
+      persistDraft(targetSpace)
       if (e instanceof InvestmentApiError && e.status === 401) {
         clearPrivateState()
         setOwner('')
@@ -645,7 +657,12 @@ function App() {
         setError(`检测到并发冲突，服务端未覆盖你的修改。请刷新当前空间后核对再提交。${e.message ? `（${e.message}）` : ''}`)
       } else setError(e instanceof Error ? e.message : '操作失败，请查看服务状态')
     }
-    finally { setBusy('') }
+    finally {
+      if (busyRef.current === lock) {
+        busyRef.current = null
+        if (isCurrent()) setBusy('')
+      }
+    }
   }
   const refresh = async (ids?: string[], full = false) => act('正在更新数据…', async () => {
     const targetIds = ids || instruments.map(item => item.id)
@@ -803,7 +820,6 @@ function App() {
 
   const chartSnapshot = tab === 'funds' ? snapshot : snapshot
   const latestJob = jobsSeen[0]
-  const selectedPlans = (data?.plans || []).filter(p => !selected || p.instrument_id === selected)
   const fundItems = instruments.filter(i => i.kind === 'etf' || i.kind === 'fund')
   const expenseUnset = !data?.profile || !data.profile.minimum_commission && !data.profile.commission_rate && !data.profile.stamp_tax_rate && !data.profile.transfer_fee_rate
 
@@ -812,27 +828,27 @@ function App() {
       <div className="brand"><div className="brand-mark"><Activity size={18} strokeWidth={2.6} /></div><div><b>知行</b><span>INVESTMENT DESK</span></div></div>
       <div className="workspace-label">{space === 'demo' ? '演示空间 · 合成数据' : '私人空间 · 空账本起步'} <ChevronDown size={13} /></div>
       <div className="side-caption">工作区</div>
-      <nav>{nav.map(item => { const Icon = item.icon; return <button key={item.id} className={`nav-item ${tab === item.id ? 'active' : ''}`} onClick={() => { setTab(item.id); setMobileNav(false) }}><Icon size={17} /><span>{item.label}</span>{item.id === 'plan' && selectedPlans.length > 0 && <small>{selectedPlans.length}</small>}</button> })}</nav>
+      <nav>{nav.map(item => { const Icon = item.icon; return <button key={item.id} className={`nav-item ${tab === item.id ? 'active' : ''}`} onClick={() => { setTab(item.id); setMobileNav(false) }}><Icon size={17} /><span>{item.label}</span>{item.id === 'plan' && !!data?.plans.length && <small>{data.plans.length}</small>}</button> })}</nav>
       <div className="side-spacer" />
-      <div className="sidebar-note"><div className="note-icon"><ShieldAlert size={16} /></div><b>只做记录与研究</b><p>数据用于理解市场，不连接证券账户，也不会替你下单。</p><span>登录保护 · Asia/Shanghai</span></div>
+      <div className="sidebar-note"><div className="note-icon"><ShieldAlert size={16} /></div><b>自动分析，亲自决策</b><p>查看条件建议，在同花顺自行操作，成交后回到这里记录。</p><span>登录保护 · Asia/Shanghai</span></div>
       <button className="side-settings" onClick={() => { setSettingsOpen(true); void loadBackups() }}><Settings2 size={16} />个人设置与备份</button>
       <div className="side-version">云端数据 <span className="live-dot" /> 私人空间隔离{outbox.length > 0 && <small className="investment-outbox-status"> · {outbox.filter(item => item.state === 'queued').length} 笔待同步</small>}</div>
     </aside>
     {mobileNav && <button className="mobile-scrim" onClick={() => setMobileNav(false)} aria-label="关闭菜单" />}
 
     <main className="main-area">
-      <header className="topbar"><button className="icon-button mobile-menu" onClick={() => setMobileNav(true)}><Menu size={19} /></button><div className="breadcrumb">工作区 <span>/</span> <b>{nav.find(n => n.id === tab)?.label}</b><BoardSwitch current="investment" space={space} /></div><div className="top-actions"><div className="market-status"><span className={`status-dot ${market?.status === 'fresh' ? 'is-fresh' : market?.status === 'stale' ? 'is-stale' : ''}`} />{market ? `${market.date || '市场数据'} · ${statusText(market.status)}` : '市场温度待补充'}</div><label className="investment-space-control"><span className="sr-only">投资空间</span><select aria-label="投资空间" disabled={!!busy} value={space} onChange={e => { persistDraft(space); const next = e.target.value as Space; if (next === space) return; if (typeof window !== 'undefined') window.localStorage.setItem('qs-selected-space', next); setMobileNav(false); setSpace(next) }}><option value="personal">私人</option><option value="demo">演示</option></select></label><button className="icon-button" aria-label="通知" title={latestJob?.message || '无新通知'}><Bell size={17} />{jobActive && <i />}</button><button className="avatar" onClick={() => { setSettingsOpen(true); void loadBackups() }}>丘</button></div></header>
+      <header className="topbar"><button className="icon-button mobile-menu" aria-label="打开模块菜单" onClick={() => setMobileNav(true)}><Menu size={19} /></button><div className="breadcrumb">工作区 <span>/</span> <b>{nav.find(n => n.id === tab)?.label}</b><BoardSwitch current="investment" space={space} /></div><div className="top-actions"><div className="market-status"><span className={`status-dot ${market?.status === 'fresh' ? 'is-fresh' : market?.status === 'stale' ? 'is-stale' : ''}`} />{market ? `${market.date || '市场数据'} · ${statusText(market.status)}` : '市场温度待补充'}</div><label className="investment-space-control"><span className="sr-only">投资空间</span><select aria-label="投资空间" disabled={!!busy} value={space} onChange={e => { persistDraft(space); const next = e.target.value as Space; if (next === space) return; if (typeof window !== 'undefined') window.localStorage.setItem('qs-selected-space', next); setMobileNav(false); setSpace(next) }}><option value="personal">私人</option><option value="demo">演示</option></select></label><button className="icon-button" aria-label="通知" title={latestJob?.message || '无新通知'}><Bell size={17} />{jobActive && <i />}</button><button className="avatar" onClick={() => { setSettingsOpen(true); void loadBackups() }}>丘</button></div></header>
       <div className="page-wrap">
         {error && <div className="alert alert-error"><ShieldAlert size={16} /><span>{error}</span><button onClick={() => setError('')}><X size={14} /></button></div>}
         {notice && <div className="alert alert-success"><Check size={15} /><span>{notice}</span><button onClick={() => setNotice('')}><X size={14} /></button></div>}
         {loading && !data ? <div className="loading-page"><LoaderCircle className="spin" size={24} /><p>正在读取投资工作台…</p><small>连接失败时不会展示模拟数据。</small></div> : !data ? <section className="connect-state"><div className="empty-icon"><Activity /></div><h1>投资服务暂不可用</h1><p>{error || '请确认个人工作台 API 服务已启动，再重新连接。'}</p><button className="button button-primary" onClick={() => void load()}><RefreshCw size={15} />重新连接</button></section> : <>
           {tab === "today" && <>
-            <DecisionDashboard advice={data.advice} loading={loading} busy={!!busy || jobActive} onRefresh={() => void refresh(undefined, true)} onSettings={() => { setSettingsOpen(true); setAccountEditOpen(false) }} onInspect={id => { setSelected(id); setTab("diagnosis") }} onSavePlan={item => void saveAutomaticPlan(item)} onRecord={openActualRecord} />
+            <DecisionDashboard advice={data.advice} loading={loading || jobActive} busy={!!busy || jobActive} onRefresh={() => void refresh(undefined, true)} onSettings={() => { setSettingsOpen(true); setAccountEditOpen(false) }} onInspect={id => { setSelected(id); setTab("diagnosis") }} onSavePlan={item => void saveAutomaticPlan(item)} onRecord={openActualRecord} />
             <div className="decision-account-link"><span>证券权益 <b>{yuan(portfolio?.total_equity)}</b> · 账户现金 <b>{yuan(portfolio?.cash)}</b>{data.account_context && <> · 场外备用（未到账） <b>{yuan(data.account_context.external_cash)}</b></>}</span><button className="text-action" onClick={() => setTab("assets")}>查看资产与收益 <ArrowUpRight size={14} /></button></div>
             <details className="research-details">
               <summary><BarChart3 size={18} /><span>查看市场图表、自选和历史报告<small>进阶资料按需展开，日常使用不必导入报告</small></span><ChevronDown size={16} /></summary>
               <div className="research-details-body">
-            <div className="page-heading"><div><div className="eyebrow"><span className="eyebrow-dot" /> MARKET BRIEF <span>·</span> {today}</div><h1>今日盘前复盘<span className="heading-period">。</span></h1><p>先看市场环境，再检查关注标的。计划可以调整，交易由你亲自确认。</p></div><div className="heading-actions"><button className="button button-secondary" disabled={!!busy || jobActive} onClick={() => void refresh(undefined, true)}><RefreshCw size={15} className={jobActive ? 'spin' : ''} />{jobActive ? '数据更新中' : '更新市场数据'}</button><button className="button button-primary" onClick={() => setTab('plan')}><Plus size={16} />写今日预案</button></div></div>
+            <div className="page-heading"><div><div className="eyebrow"><span className="eyebrow-dot" /> MARKET BRIEF <span>·</span> {today}</div><h1>行情与研究资料<span className="heading-period">。</span></h1><p>自动建议已在上方生成；这里保留行情图表、来源、自选和手工深度报告。</p></div><div className="heading-actions"><button className="button button-secondary" disabled={!!busy || jobActive} onClick={() => void refresh(undefined, true)}><RefreshCw size={15} className={jobActive ? 'spin' : ''} />{jobActive ? '数据更新中' : '更新市场数据'}</button><button className="button button-primary" onClick={() => setTab('plan')}><Plus size={16} />写今日预案</button></div></div>
             <section className="index-strip"><div className="section-heading"><div><h2>主要指数</h2><p>仅显示已关注且有真实行情/日线的指数。</p></div><button className="text-action" onClick={() => setTab('diagnosis')}>查看体检 <ArrowUpRight size={14} /></button></div><div className="index-grid">{majorIndexCards.map(spec => <MiniIndexCard key={`${spec.exchange}:${spec.code}`} item={spec.item} snapshot={spec.item ? data.snapshots[spec.item.id] : undefined} name={spec.name} code={spec.code} />)}</div></section>
             {data.account_context && <AccountContextCard context={data.account_context} instruments={instruments} lossLimit={data.profile.loss_limit} compact onEdit={() => { setAccountEditOpen(true); setSettingsOpen(true) }} />}
             <div className="overview-grid">
@@ -864,7 +880,7 @@ function App() {
                   <div className="card-subsection"><div className="subsection-title"><b>事实与来源</b><span>{snapshot?.fundamentals?.length || 0} 项可核验记录</span></div>{snapshot?.fundamentals?.length ? <div className="fact-list">{snapshot.fundamentals.map((f, ix) => <div className="fact-row" key={`${f.label}-${ix}`}><span>{f.label}</span><b>{f.value == null ? '待补充' : `${f.value}${f.unit === '文本' ? '' : f.unit || ''}`}</b><small>{f.period || '期间待补充'} · {f.source || '来源待补充'}</small>{f.url && <a href={f.url} target="_blank" rel="noreferrer">原始来源 ↗</a>}</div>)}</div> : <div className="subtle-empty">基本面事实暂未接入；未核实的数据不会显示成结论。</div>}{snapshot?.evidence?.length ? <EvidenceList evidence={snapshot.evidence} /> : null}</div>
                   <section className="card-subsection report-on-diagnosis"><div className="subsection-title"><b>此标的诊断报告</b><span>此标的专属分析，旧快照报告仍可阅读</span></div>{diagnosisReports.length ? diagnosisReports.map((report, index) => <ReportView key={report.id || `${report.snapshot_id}-${index}`} report={report} currentSnapshotId={snapshot?.snapshot_id} />) : <div className="subtle-empty">该标的尚无诊断报告；不会拿市场复盘报告代替。</div>}</section>
                 </>}</section>
-              <aside className="stack"><section className="card side-card"><div className="section-kicker">计划与纪律</div><h3>先定义条件，再决定是否行动</h3><p>本页不生成“买入 / 卖出”建议。预算检查只按合同约束返回规则提示，且不能执行交易。</p><button className="button button-primary full" disabled={!selected} onClick={() => { setPlanDraft(d => ({ ...d, instrument_id: selected })); setTab('plan') }}>为此标的写预案 <ArrowUpRight size={15} /></button></section><section className="card side-card"><div className="section-kicker">预算规则核验</div><label className="field-label">想检查的预算金额 <span>仅校验交易规则</span></label><div className="input-with-prefix"><span>¥</span><input type="number" min="0" value={orderBudget} onChange={e => setOrderBudget(e.target.value)} placeholder="输入金额" /></div><button className="button button-secondary full" disabled={!selected || !!busy} onClick={() => void checkOrder()}>检查规则</button>{orderCheck && <div className={`order-result ${orderCheck.eligible ? 'eligible' : ''}`}><b>{orderCheck.eligible && orderCheck.quantity != null ? `规则允许数量：${orderCheck.quantity}` : '暂不提供数量'}</b>{orderCheck.cost != null && <span>估算金额 {yuan(orderCheck.cost)}（不含未确认费用）</span>}<ul>{orderCheck.reasons.map((r, i) => <li key={i}>{r}</li>)}</ul></div>}<div className="side-footnote">交易数量与费用可能因品种、规则和券商设置不同而变化。核验结果不是下单指令。</div></section><section className="card side-card source-card"><div className="section-kicker">数据状态</div><SourceRow label="行情源" value={sourceLabel(snapshot?.quote_source || snapshot?.source)} /><SourceRow label="日线源" value={sourceLabel(snapshot?.history_source)} /><SourceRow label="数据时间" value={snapshot?.as_of || '待补充'} /><SourceRow label="抓取时间" value={dateTime(snapshot?.fetched_at)} /><SourceRow label="复权方式" value={snapshot?.adjustment === 'none' ? '不复权' : snapshot?.adjustment || '待补充'} /></section></aside></div>
+              <aside className="stack"><section className="card side-card"><div className="section-kicker">计划与纪律</div><h3>{selectedAdvice?.action_label || '等待自动建议'}</h3><p>{selectedAdvice?.headline || '选择有行情的持仓或关注标的，查看自动规则分析。'}</p>{selectedAdvice ? <button className="button button-primary full" disabled={!!busy || jobActive} onClick={() => void saveAutomaticPlan(selectedAdvice)}>保存条件预案 <Check size={15} /></button> : <button className="button button-primary full" disabled={!selected} onClick={() => { setPlanDraft(d => ({ ...d, instrument_id: selected })); setTab('plan') }}>写观察预案 <ArrowUpRight size={15} /></button>}</section><section className="card side-card"><div className="section-kicker">预算规则核验</div><label className="field-label">想检查的预算金额 <span>仅校验交易规则</span></label><div className="input-with-prefix"><span>¥</span><input type="number" min="0" value={orderBudget} onChange={e => setOrderBudget(e.target.value)} placeholder="输入金额" /></div><button className="button button-secondary full" disabled={!selected || !!busy} onClick={() => void checkOrder()}>检查规则</button>{orderCheck && <div className={`order-result ${orderCheck.eligible ? 'eligible' : ''}`}><b>{orderCheck.eligible && orderCheck.quantity != null ? `规则允许数量：${orderCheck.quantity}` : '暂不提供数量'}</b>{orderCheck.cost != null && <span>估算金额 {yuan(orderCheck.cost)}（不含未确认费用）</span>}<ul>{orderCheck.reasons.map((r, i) => <li key={i}>{r}</li>)}</ul></div>}<div className="side-footnote">交易数量与费用可能因品种、规则和券商设置不同而变化。核验结果不是下单指令。</div></section><section className="card side-card source-card"><div className="section-kicker">数据状态</div><SourceRow label="行情源" value={sourceLabel(snapshot?.quote_source || snapshot?.source)} /><SourceRow label="日线源" value={sourceLabel(snapshot?.history_source)} /><SourceRow label="数据时间" value={snapshot?.as_of || '待补充'} /><SourceRow label="抓取时间" value={dateTime(snapshot?.fetched_at)} /><SourceRow label="复权方式" value={snapshot?.adjustment === 'none' ? '不复权' : snapshot?.adjustment || '待补充'} /></section></aside></div>
           </>}
 
           {tab === 'plan' && <>

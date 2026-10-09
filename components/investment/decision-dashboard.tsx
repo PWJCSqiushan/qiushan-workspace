@@ -35,7 +35,7 @@ const overallMeta = {
 const strengthLabel = { strong: '规则信号较强', neutral: '信号中性', weak: '信号较弱', unknown: '依据不足' } as const
 const kindLabel: Record<string, string> = { etf: 'ETF', stock: '股票', fund: '场外基金', index: '指数' }
 const statusLabel: Record<string, string> = { available: '已取得', complete: '完整', missing: '待补充', stale: '缓存数据', fresh: '最新已取得', partial: '部分覆盖', unavailable: '暂不可用' }
-const dimensionLabel: Record<string, string> = { index: '指数趋势', indices: '指数趋势', breadth: '涨跌分布', sentiment: '市场情绪', macro: '宏观消息', flow: '资金数据', funds: '资金数据' }
+const dimensionLabel: Record<string, string> = { index: '指数趋势', indices: '指数趋势', breadth: '涨跌分布', sentiment: '市场情绪', macro: '宏观消息', flow: '资金数据', funds: '资金数据', index_trend: '指数技术趋势' }
 const sourceLabel: Record<string, string> = { eastmoney: '东方财富', eastmoney_quote: '东方财富行情', eastmoney_history: '东方财富日线', tencent: '腾讯行情', tencent_quote: '腾讯行情', tencent_history: '腾讯日线', sina: '新浪行情', sina_history: '新浪日线', calculated: '依据历史行情计算' }
 
 function displayNumber(value: number | null | undefined, digits = 2) {
@@ -44,8 +44,8 @@ function displayNumber(value: number | null | undefined, digits = 2) {
     : '待补充'
 }
 
-function displayCompactNumber(value: number) {
-  return value.toLocaleString('zh-CN', { maximumFractionDigits: 2 })
+function displayCompactNumber(value: number, digits = 2) {
+  return value.toLocaleString('zh-CN', { maximumFractionDigits: digits })
 }
 
 function displayMoney(value: number | null | undefined) {
@@ -72,7 +72,7 @@ function displayTime(value: string | null | undefined) {
 }
 
 function valueWithUnit(value: number | string | null, unit?: string) {
-  return value == null ? '待补充' : `${typeof value === 'number' ? displayCompactNumber(value) : value}${unit || ''}`
+  return value == null ? '待补充' : `${typeof value === 'number' ? displayCompactNumber(value, unit?.includes('元') ? 6 : 2) : value}${unit || ''}`
 }
 
 export function DecisionDashboard({ advice, loading = false, busy = false, onRefresh, onSettings, onInspect, onSavePlan, onRecord }: DecisionDashboardProps) {
@@ -106,7 +106,7 @@ export function DecisionDashboard({ advice, loading = false, busy = false, onRef
     <div className="dh-summary-row">
       <section className="dh-card dh-market-card"><div className="dh-card-head"><div><span className="dh-section-label"><ChartNoAxesCombined size={15} />市场依据</span><p>{advice.market.label || '市场维度待整理'} · {advice.market.data_status === 'stale' ? '含缓存数据' : advice.market.data_status === 'complete' ? '覆盖完整' : advice.market.data_status === 'partial' ? '部分覆盖' : '数据待补充'}</p></div><span className="dh-date-chip">{advice.as_of || '日期待补充'}</span></div>
         <div className="dh-coverage"><div className="dh-coverage-title"><span>可用分析维度</span><b>{coverage.total > 0 ? `${coverage.available} / ${coverage.total}` : '待补充'}</b></div><div className="dh-coverage-track" role="img" aria-label={coverage.total > 0 ? `可用分析维度 ${coverage.available} 项，共 ${coverage.total} 项` : '分析维度覆盖待补充'}><i style={{ width: `${coveragePct}%` }} /></div><small>数据覆盖范围，不代表获利概率。</small></div>
-        <div className="dh-dimensions">{advice.market.dimensions.length ? advice.market.dimensions.map(dimension => <article className="dh-dimension" key={dimension.key}><div><b>{dimension.label}</b><span className={`dh-dimension-status ${dimension.status === 'available' || dimension.status === 'complete' ? 'is-available' : ''}`}>{statusLabel[dimension.status] || '待核验'}</span></div><p>{dimension.summary || '该项依据待补充。'}</p><small>{valueWithUnit(dimension.value)}</small></article>) : <div className="dh-inline-empty">市场分析维度待补充；已取得的指数趋势仍可在关注列表中查看。</div>}</div>
+        <div className="dh-dimensions">{advice.market.dimensions.length ? advice.market.dimensions.map(dimension => <article className="dh-dimension" key={dimension.key}><div><b>{dimension.label}</b><span className={`dh-dimension-status ${dimension.status === 'available' || dimension.status === 'complete' ? 'is-available' : ''}`}>{statusLabel[dimension.status] || '待核验'}</span></div><p>{dimension.summary || '该项依据待补充。'}</p>{dimension.value !== dimension.summary && <small>{valueWithUnit(dimension.value)}</small>}</article>) : <div className="dh-inline-empty">市场分析维度待补充；已取得的指数趋势仍可在关注列表中查看。</div>}</div>
         {!!coverage.missing.length && <details className="dh-missing-details"><summary>查看缺失的 {coverage.missing.length} 项数据</summary><p>{coverage.missing.map(key => dimensionLabel[key] || key).join('、')}</p></details>}
       </section>
       <section className="dh-card dh-today-steps"><div className="dh-card-head"><div><span className="dh-section-label"><BookOpenCheck size={15} />今天三步</span><p>建议是核对顺序，不是自动下单流程。</p></div></div><ol><li><i>1</i><span><b>看自动建议</b><small>先读总判断和自己的持仓卡。</small></span><CheckCircle2 size={16} /></li><li><i>2</i><span><b>打开同花顺核对</b><small>重新确认行情、可卖份额和费用。</small></span><ArrowRight size={16} /></li><li><i>3</i><span><b>只记录实际成交</b><small>没有成交时，不要把预案记成交易。</small></span><Wallet size={16} /></li></ol><div className="dh-no-order-note"><ShieldCheck size={14} />建议不会连接券商，也不会替你提交委托。</div></section>
