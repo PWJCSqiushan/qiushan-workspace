@@ -437,8 +437,11 @@ export function numeric(value: unknown, label: string, optional = false, positiv
   return number(value, label, optional, positive);
 }
 
+// A full historical import calls date validation thousands of times. Reuse
+// the immutable formatter instead of rebuilding ICU timezone data per row.
+const shanghaiDateFormatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' });
 export function todayShanghai(now = new Date()) {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(now);
+  return shanghaiDateFormatter.format(now);
 }
 
 export function validDate(value: unknown, label = 'date', now = new Date()) {
