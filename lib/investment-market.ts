@@ -66,6 +66,15 @@ export interface Evidence {
   summary?: string;
 }
 
+export interface Fundamental {
+  label: string;
+  value: string | number | null;
+  unit: string | null;
+  period: string | null;
+  source: string | null;
+  url: string | null;
+}
+
 export interface Snapshot {
   snapshot_id: string;
   instrument_id: string;
@@ -92,7 +101,7 @@ export interface Snapshot {
   adjustment: 'none';
   valuation_kind: 'market_price' | 'confirmed_nav';
   metrics: Metrics;
-  fundamentals: never[];
+  fundamentals: Fundamental[];
   evidence: Evidence[];
   warnings: string[];
   source_attempts: SourceAttempt[];
@@ -296,6 +305,8 @@ const EMPTY_SENTIMENT: MarketSentiment = {
   max_streak: null,
 };
 
+const COLLECTION_BUDGET_MS = 11_000;
+
 class SourceFailure extends Error {
   readonly source: string;
   readonly url: string;
@@ -307,6 +318,33 @@ class SourceFailure extends Error {
     this.source = source;
     this.url = url;
   }
+}
+
+class DeadlineExceeded extends Error {
+  attempts?: SourceAttempt[];
+
+  constructor() {
+    super('market collection deadline exceeded');
+    this.name = 'DeadlineExceeded';
+  }
+}
+
+type Deadline = number | undefined;
+
+function isDeadlineExceeded(error: unknown): error is DeadlineExceeded {
+  return error instanceof DeadlineExceeded;
+}
+
+function throwIfDeadline(deadline: Deadline): void {
+  if (deadline !== undefined && Date.now() >= deadline)
+    throw new DeadlineExceeded();
+}
+
+function carryDeadlineAttempts(error: unknown, attempts: SourceAttempt[]) {
+  if (isDeadlineExceeded(error)) {
+    error.attempts = [...attempts, ...(error.attempts ?? [])];
+  }
+  return error;
 }
 
 function textOf(value: unknown): string {
@@ -403,31 +441,43 @@ function sourceError(error: unknown): string {
   return text.slice(0, 300);
 }
 
-async function requestText(url: string, timeoutMs = 8_000): Promise<string> {
+async function requestText(
+  url: string,
+  timeoutMs = 8_000,
+  deadline?: number,
+): Promise<string> {
   const safeUrl = validatedUrl(url);
+  throwIfDeadline(deadline);
+  const remaining = deadline === undefined ? timeoutMs : deadline - Date.now();
+  const effectiveTimeout = Math.min(timeoutMs, remaining);
+  if (effectiveTimeout <= 0) throw new DeadlineExceeded();
   const controller =
     typeof AbortController === 'function' ? new AbortController() : null;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       controller?.abort();
-      reject(new Error(`request timeout after ${timeoutMs}ms`));
-    }, timeoutMs);
+      if (deadline !== undefined && Date.now() >= deadline)
+        reject(new DeadlineExceeded());
+      else reject(new Error(`request timeout after ${timeoutMs}ms`));
+    }, effectiveTimeout);
   });
-  try {
-    const response = await Promise.race([
-      globalThis.fetch(safeUrl, {
-        method: 'GET',
-        headers: { Accept: 'application/json,text/plain,*/*' },
-        signal: controller?.signal,
-      }),
-      timeout,
-    ]);
+  const fetchAndRead = (async () => {
+    const response = await globalThis.fetch(safeUrl, {
+      method: 'GET',
+      headers: { Accept: 'application/json,text/plain,*/*' },
+      signal: controller?.signal,
+    });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     if (typeof response.text === 'function') return await response.text();
     if (typeof response.arrayBuffer === 'function')
       return new TextDecoder().decode(await response.arrayBuffer());
     throw new Error('response has no text body');
+  })();
+  try {
+    const text = await Promise.race([fetchAndRead, timeout]);
+    throwIfDeadline(deadline);
+    return text;
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
@@ -436,14 +486,17 @@ async function requestText(url: string, timeoutMs = 8_000): Promise<string> {
 async function requestJson(
   url: string,
   source: string,
+  deadline?: number,
 ): Promise<Record<string, unknown>> {
   try {
-    const text = await requestText(url);
+    const text = await requestText(url, 8_000, deadline);
     const body: unknown = JSON.parse(text);
+    throwIfDeadline(deadline);
     if (!body || typeof body !== 'object' || Array.isArray(body))
       throw new Error('unexpected JSON shape');
     return body as Record<string, unknown>;
   } catch (error) {
+    if (isDeadlineExceeded(error)) throw error;
     if (error instanceof SourceFailure) throw error;
     throw new SourceFailure(source, url, sourceError(error));
   }
@@ -662,8 +715,12 @@ function previousSnapshot(input: unknown): Snapshot | null {
       row.metrics && typeof row.metrics === 'object'
         ? (row.metrics as Metrics)
         : emptyMetrics(history),
-    fundamentals: [],
-    evidence: Array.isArray(row.evidence) ? (row.evidence as Evidence[]) : [],
+    fundamentals: Array.isArray(row.fundamentals)
+      ? (row.fundamentals as Fundamental[]).map((item) => ({ ...item }))
+      : [],
+    evidence: Array.isArray(row.evidence)
+      ? (row.evidence as Evidence[]).map((item) => ({ ...item }))
+      : [],
     warnings: Array.isArray(row.warnings) ? row.warnings.map(String) : [],
     source_attempts: Array.isArray(row.source_attempts)
       ? (row.source_attempts as SourceAttempt[])
@@ -746,14 +803,18 @@ function parseEastmoneyQuote(
   return { quote, as_of: parseSourceTimestamp(item.f124) };
 }
 
-async function fetchQuote(instrument: Instrument): Promise<QuoteResult> {
+async function fetchQuote(
+  instrument: Instrument,
+  deadline?: number,
+): Promise<QuoteResult> {
   const attempts: SourceAttempt[] = [];
+  throwIfDeadline(deadline);
   const eastmoneyUrl = queryUrl(ENDPOINTS.eastmoney_quote, {
     secid: secidOf(instrument),
     fields: 'f43,f44,f45,f46,f47,f48,f57,f58,f59,f60,f86,f124,f170',
   });
   try {
-    const body = await requestJson(eastmoneyUrl, 'eastmoney_quote');
+    const body = await requestJson(eastmoneyUrl, 'eastmoney_quote', deadline);
     const parsed = parseEastmoneyQuote(body, instrument, eastmoneyUrl);
     attempts.push(okAttempt('eastmoney_quote', 'quote', eastmoneyUrl));
     return {
@@ -763,14 +824,16 @@ async function fetchQuote(instrument: Instrument): Promise<QuoteResult> {
       attempts,
     };
   } catch (error) {
+    if (isDeadlineExceeded(error)) throw carryDeadlineAttempts(error, attempts);
     attempts.push(
       errorAttempt('eastmoney_quote', 'quote', eastmoneyUrl, error),
     );
   }
 
+  throwIfDeadline(deadline);
   const tencentUrl = `${ENDPOINTS.tencent_quote}${tencentSymbol(instrument)}`;
   try {
-    const text = await requestText(tencentUrl);
+    const text = await requestText(tencentUrl, 8_000, deadline);
     const match = /="([\s\S]*?)"\s*;/.exec(text);
     const fields = match?.[1]?.split('~') ?? [];
     if (
@@ -804,7 +867,9 @@ async function fetchQuote(instrument: Instrument): Promise<QuoteResult> {
       attempts,
     };
   } catch (error) {
+    if (isDeadlineExceeded(error)) throw carryDeadlineAttempts(error, attempts);
     attempts.push(errorAttempt('tencent_quote', 'quote', tencentUrl, error));
+    throwIfDeadline(deadline);
     const failure = new SourceFailure(
       'quote',
       tencentUrl,
@@ -1008,13 +1073,17 @@ function parseFundNav(text: string, source: string, url: string): HistoryRow[] {
   return cleaned;
 }
 
-async function fetchHistory(instrument: Instrument): Promise<HistoryResult> {
+async function fetchHistory(
+  instrument: Instrument,
+  deadline?: number,
+): Promise<HistoryResult> {
   const attempts: SourceAttempt[] = [];
+  throwIfDeadline(deadline);
   const code = codeOf(instrument);
   if (instrument.kind === 'fund') {
     const url = `${ENDPOINTS.eastmoney_fund_nav}${code}.js`;
     try {
-      const text = await requestText(url);
+      const text = await requestText(url, 8_000, deadline);
       const history = parseFundNav(text, 'eastmoney_fund_nav', url);
       attempts.push(okAttempt('eastmoney_fund_nav', 'history', url));
       return {
@@ -1025,7 +1094,10 @@ async function fetchHistory(instrument: Instrument): Promise<HistoryResult> {
         attempts,
       };
     } catch (error) {
+      if (isDeadlineExceeded(error))
+        throw carryDeadlineAttempts(error, attempts);
       attempts.push(errorAttempt('eastmoney_fund_nav', 'history', url, error));
+      throwIfDeadline(deadline);
       const failure = new SourceFailure(
         'history',
         url,
@@ -1048,7 +1120,7 @@ async function fetchHistory(instrument: Instrument): Promise<HistoryResult> {
   };
   const eastmoneyUrl = queryUrl(ENDPOINTS.eastmoney_history, params);
   try {
-    const body = await requestJson(eastmoneyUrl, 'eastmoney_history');
+    const body = await requestJson(eastmoneyUrl, 'eastmoney_history', deadline);
     const history = parseEastmoneyHistory(
       body,
       'eastmoney_history',
@@ -1063,17 +1135,19 @@ async function fetchHistory(instrument: Instrument): Promise<HistoryResult> {
       attempts,
     };
   } catch (error) {
+    if (isDeadlineExceeded(error)) throw carryDeadlineAttempts(error, attempts);
     attempts.push(
       errorAttempt('eastmoney_history', 'history', eastmoneyUrl, error),
     );
   }
 
+  throwIfDeadline(deadline);
   const tencentParam = `${tencentSymbol(instrument)},day,,,320,`;
   const tencentUrl = queryUrl(ENDPOINTS.tencent_history, {
     param: tencentParam,
   });
   try {
-    const body = await requestJson(tencentUrl, 'tencent_history');
+    const body = await requestJson(tencentUrl, 'tencent_history', deadline);
     const history = parseTencentHistory(
       body,
       instrument,
@@ -1089,12 +1163,14 @@ async function fetchHistory(instrument: Instrument): Promise<HistoryResult> {
       attempts,
     };
   } catch (error) {
+    if (isDeadlineExceeded(error)) throw carryDeadlineAttempts(error, attempts);
     attempts.push(
       errorAttempt('tencent_history', 'history', tencentUrl, error),
     );
   }
 
   if (instrument.kind === 'stock') {
+    throwIfDeadline(deadline);
     const sinaUrl = queryUrl(ENDPOINTS.sina_history, {
       symbol: tencentSymbol(instrument),
       scale: '240',
@@ -1102,7 +1178,7 @@ async function fetchHistory(instrument: Instrument): Promise<HistoryResult> {
       datalen: '320',
     });
     try {
-      const text = await requestText(sinaUrl);
+      const text = await requestText(sinaUrl, 8_000, deadline);
       const history = parseSinaHistory(text, 'sina_history', sinaUrl);
       attempts.push(okAttempt('sina_history', 'history', sinaUrl));
       return {
@@ -1113,9 +1189,12 @@ async function fetchHistory(instrument: Instrument): Promise<HistoryResult> {
         attempts,
       };
     } catch (error) {
+      if (isDeadlineExceeded(error))
+        throw carryDeadlineAttempts(error, attempts);
       attempts.push(errorAttempt('sina_history', 'history', sinaUrl, error));
     }
   }
+  throwIfDeadline(deadline);
   const failure = new SourceFailure(
     'history',
     attempts.at(-1)?.url ?? ENDPOINTS.eastmoney_history,
@@ -1154,7 +1233,11 @@ async function makeMissingSnapshot(
   attempts: SourceAttempt[],
 ): Promise<Snapshot> {
   const prior =
-    previous && (previous.quote.price !== null || previous.history.length)
+    previous &&
+    (previous.quote.price !== null ||
+      previous.history.length > 0 ||
+      previous.fundamentals.length > 0 ||
+      previous.evidence.length > 0)
       ? previous
       : null;
   if (prior) {
@@ -1211,6 +1294,7 @@ export async function fetchInvestmentSnapshot(
   instrumentInput: Instrument,
   previous?: unknown,
 ): Promise<Snapshot> {
+  const deadline = Date.now() + COLLECTION_BUDGET_MS;
   const instrument = normalizeInstrument(instrumentInput);
   const parsedPrior = previousSnapshot(previous);
   const prior =
@@ -1228,10 +1312,12 @@ export async function fetchInvestmentSnapshot(
     instrument.kind === 'fund' ? 'confirmed_nav' : 'market_price';
   let quoteFetched = false;
   let historyFetched = false;
+  let deadlineReached = false;
 
   if (instrument.kind !== 'fund') {
     try {
-      const result = await fetchQuote(instrument);
+      const result = await fetchQuote(instrument, deadline);
+      throwIfDeadline(deadline);
       quote = result.quote;
       quoteSource = result.source;
       quoteSourceUrl = result.url;
@@ -1243,24 +1329,29 @@ export async function fetchInvestmentSnapshot(
         error as SourceFailure & { attempts?: SourceAttempt[] }
       ).attempts;
       if (Array.isArray(sourceAttempts)) attempts.push(...sourceAttempts);
+      deadlineReached = isDeadlineExceeded(error);
       warnings.push(`行情获取失败：${sourceError(error)}`);
     }
   }
 
-  try {
-    const result = await fetchHistory(instrument);
-    history = result.history;
-    historySource = result.source;
-    historySourceUrl = result.url;
-    valuationKind = result.valuation_kind;
-    historyFetched = true;
-    attempts.push(...result.attempts);
-  } catch (error) {
-    const sourceAttempts = (
-      error as SourceFailure & { attempts?: SourceAttempt[] }
-    ).attempts;
-    if (Array.isArray(sourceAttempts)) attempts.push(...sourceAttempts);
-    warnings.push(`日线/净值获取失败：${sourceError(error)}`);
+  if (!deadlineReached) {
+    try {
+      const result = await fetchHistory(instrument, deadline);
+      throwIfDeadline(deadline);
+      history = result.history;
+      historySource = result.source;
+      historySourceUrl = result.url;
+      valuationKind = result.valuation_kind;
+      historyFetched = true;
+      attempts.push(...result.attempts);
+    } catch (error) {
+      const sourceAttempts = (
+        error as SourceFailure & { attempts?: SourceAttempt[] }
+      ).attempts;
+      if (Array.isArray(sourceAttempts)) attempts.push(...sourceAttempts);
+      deadlineReached = isDeadlineExceeded(error);
+      warnings.push(`日线/净值获取失败：${sourceError(error)}`);
+    }
   }
 
   // When every cloud source failed, preserve the prior content identity and
@@ -1375,8 +1466,8 @@ export async function fetchInvestmentSnapshot(
     adjustment: 'none',
     valuation_kind: valuationKind,
     metrics: metrics(history, historyStatus === 'fresh'),
-    fundamentals: [],
-    evidence: [],
+    fundamentals: prior?.fundamentals.map((item) => ({ ...item })) ?? [],
+    evidence: prior?.evidence.map((item) => ({ ...item })) ?? [],
     warnings,
     source_attempts: attempts,
   };
@@ -1604,6 +1695,7 @@ function previousMarket(input: unknown): Market | null {
 export async function refreshInvestmentMarket(
   previous?: unknown,
 ): Promise<Market> {
+  const deadline = Date.now() + COLLECTION_BUDGET_MS;
   const prior = previousMarket(previous);
   const url = queryUrl(ENDPOINTS.eastmoney_market_full, {
     pn: '1',
@@ -1619,7 +1711,8 @@ export async function refreshInvestmentMarket(
   });
   const attempts: SourceAttempt[] = [];
   try {
-    const body = await requestJson(url, 'eastmoney_market_full');
+    const body = await requestJson(url, 'eastmoney_market_full', deadline);
+    throwIfDeadline(deadline);
     const data =
       body.data && typeof body.data === 'object'
         ? (body.data as Record<string, unknown>)
@@ -1691,8 +1784,10 @@ export async function refreshInvestmentMarket(
       warnings.push(
         `最新可验证市场日期为 ${date ?? '未知'}；未将抓取时间当作数据日期`,
       );
+    const snapshotId = await digestId('market', [date, breadth, complete]);
+    throwIfDeadline(deadline);
     return {
-      snapshot_id: await digestId('market', [date, breadth, complete]),
+      snapshot_id: snapshotId,
       date,
       status,
       fetched_at: nowIso(),

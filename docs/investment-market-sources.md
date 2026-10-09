@@ -24,6 +24,7 @@ The endpoint families above are constants. No caller-provided URL is fetched, an
 - Missing values stay `null`; an absent volume, amount, open, or high/low is never replaced with zero. Daily source volumes are converted from hands to shares/units when the source supplies a number.
 - OTC funds do not use a quote endpoint or intraday estimate. Their price comes only from the published Eastmoney NAV series and is marked `valuation_kind: "confirmed_nav"`.
 - A timeout or source failure falls back to the previous snapshot as `status: "stale"`, preserving its snapshot identity. With no cache, the result is `status: "missing"` with null fields and source-attempt diagnostics.
+- Each instrument collection and market breadth refresh has one shared 11-second budget. The same abort signal covers both the upstream response and body read; once the budget expires, no quote/history fallback request is started.
 - Market breadth is null when a complete universe cannot be proven. `flow.northbound` and `flow.main` remain null because the current public interfaces and their measurement definitions were not confirmed. Sentiment fields remain null, and the adapter never emits a synthetic score.
 - The `SEEDS` list is copied from the source project's public observation samples. It is not a holdings list and does not contain private account facts. The smoke script exercises four additional public ETFs (`513090`, `588050`, `159300`, `159937`) plus an index, stock, and OTC fund; those identifiers are smoke inputs only and are not holdings or account seeds.
 

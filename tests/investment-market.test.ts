@@ -25,27 +25,32 @@ const instrument = (
   name,
 });
 
-const response = (body: string, status = 200) => ({
+const response = (
+  body: string,
+  status = 200,
+  readBody?: () => Promise<string> | string,
+) => ({
   ok: status >= 200 && status < 300,
   status,
-  text: async () => body,
+  text: async () => (readBody ? await readBody() : body),
 });
 
 async function withFetch(
   handler: (
     url: string,
+    init?: RequestInit,
   ) => Promise<ReturnType<typeof response>> | ReturnType<typeof response>,
   action: () => Promise<void>,
 ) {
   const original = globalThis.fetch;
-  globalThis.fetch = (async (input: RequestInfo | URL) => {
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url =
       typeof input === 'string'
         ? input
         : input instanceof URL
           ? input.toString()
           : input.url;
-    return handler(url);
+    return handler(url, init);
   }) as typeof fetch;
   try {
     await action();
@@ -202,8 +207,27 @@ void test('all upstream failures return a stale cached snapshot without filling 
       range_120d: null,
       history_count: 1,
     },
-    fundamentals: [],
-    evidence: [],
+    fundamentals: [
+      {
+        label: '规模',
+        value: 123.4,
+        unit: '亿元',
+        period: '2026-10-08',
+        source: 'official-facts',
+        url: 'https://push2.eastmoney.com/api/qt/stock/get?fact=1',
+      },
+    ],
+    evidence: [
+      {
+        id: 'fact-1',
+        title: '公开财务事实',
+        url: 'https://push2.eastmoney.com/api/qt/stock/get?fact=1',
+        source: 'official-facts',
+        published_at: '2026-10-08',
+        kind: 'financial',
+        summary: '缓存中的原始事实',
+      },
+    ],
     warnings: [],
     source_attempts: [],
   };
@@ -224,8 +248,53 @@ void test('all upstream failures return a stale cached snapshot without filling 
   assert.equal(snapshot.snapshot_id, previous.snapshot_id);
   assert.equal(snapshot.quote.price, 4.2);
   assert.equal(snapshot.quote.volume, null);
+  assert.deepEqual(snapshot.fundamentals, previous.fundamentals);
+  assert.deepEqual(snapshot.evidence, previous.evidence);
   assert.match(snapshot.error ?? '', /获取失败/);
   assert.ok(snapshot.source_attempts.some((item) => item.status === 'error'));
+});
+
+void test('overall deadline aborts body reads and stops quote fallback/history', async () => {
+  const originalNow = Date.now;
+  const base = originalNow();
+  let nowCalls = 0;
+  let calls = 0;
+  let aborted = false;
+  Date.now = () => {
+    nowCalls += 1;
+    if (nowCalls <= 3) return base;
+    if (nowCalls === 4) return base + 10_999;
+    return base + 11_000;
+  };
+  let snapshot: Snapshot | undefined;
+  try {
+    await withFetch(
+      async (url, init) => {
+        calls += 1;
+        assert.match(url, /stock\/get/);
+        init?.signal?.addEventListener(
+          'abort',
+          () => {
+            aborted = true;
+          },
+          { once: true },
+        );
+        return response('', 200, () => new Promise<string>(() => undefined));
+      },
+      async () => {
+        snapshot = await fetchInvestmentSnapshot(
+          instrument('etf', 'SH', '510300'),
+        );
+      },
+    );
+  } finally {
+    Date.now = originalNow;
+  }
+  assert.ok(snapshot);
+  assert.equal(calls, 1);
+  assert.equal(aborted, true);
+  assert.equal(snapshot.status, 'missing');
+  assert.equal(snapshot.history.length, 0);
 });
 
 void test('funds use only the published Eastmoney NAV series', async () => {
@@ -289,6 +358,74 @@ void test('incomplete market response leaves breadth, flow and sentiment empty',
   assert.equal(market?.sentiment.limit_up, null);
   assert.equal('score' in (market ?? {}), false);
   assert.ok(market?.warnings.some((item) => item.includes('不完整')));
+});
+
+void test('market refresh deadline aborts body reads and retains stale market cache', async () => {
+  const originalNow = Date.now;
+  const base = originalNow();
+  let nowCalls = 0;
+  let calls = 0;
+  let aborted = false;
+  Date.now = () => {
+    nowCalls += 1;
+    if (nowCalls <= 2) return base;
+    if (nowCalls === 3) return base + 10_999;
+    return base + 11_000;
+  };
+  const previousMarket = {
+    snapshot_id: 'market@cached',
+    date: '2026-10-08',
+    status: 'fresh' as const,
+    fetched_at: '2026-10-08T08:00:00.000Z',
+    source: 'eastmoney_market_full',
+    source_url: 'https://push2.eastmoney.com/api/qt/clist/get?cached=1',
+    breadth: { up: 1, down: 1, flat: 0, total: 2, amount: 100 },
+    sentiment: {
+      limit_up: null,
+      limit_down: null,
+      broken: null,
+      broken_rate: null,
+      max_streak: null,
+    },
+    flow: {
+      northbound: null,
+      northbound_note: '未获取',
+      main: null,
+      main_note: '未获取',
+    },
+    evidence: [],
+    missing_fields: [],
+    warnings: [],
+    source_attempts: [],
+  };
+  let market: Awaited<ReturnType<typeof refreshInvestmentMarket>> | undefined;
+  try {
+    await withFetch(
+      async (url, init) => {
+        calls += 1;
+        assert.match(url, /clist\/get/);
+        init?.signal?.addEventListener(
+          'abort',
+          () => {
+            aborted = true;
+          },
+          { once: true },
+        );
+        return response('', 200, () => new Promise<string>(() => undefined));
+      },
+      async () => {
+        market = await refreshInvestmentMarket(previousMarket);
+      },
+    );
+  } finally {
+    Date.now = originalNow;
+  }
+  assert.ok(market);
+  assert.equal(calls, 1);
+  assert.equal(aborted, true);
+  assert.equal(market.status, 'stale');
+  assert.equal(market.snapshot_id, previousMarket.snapshot_id);
+  assert.ok(market.warnings.some((item) => /deadline/i.test(item)));
 });
 
 void test('search preserves full identities when one numeric code names several kinds', async () => {
