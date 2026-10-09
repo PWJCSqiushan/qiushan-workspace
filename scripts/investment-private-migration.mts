@@ -14,7 +14,8 @@ assert.equal(sourceHash,expectedHash,'The authorized export changed; verify a ne
 const source=JSON.parse(bytes.toString('utf8')).data;
 assert(source&&typeof source==='object','Missing bootstrap data');
 const migrating=process.argv.includes('--migrate');
-const verifying=process.argv.includes('--verify-cloud');
+const verifyAccount=process.argv.includes('--verify-account');
+const verifying=process.argv.includes('--verify-cloud')||verifyAccount;
 let owner='private-migration-validation',version=0;
 let request:((endpoint:string,payload?:unknown,method?:string)=>Promise<any>)|undefined;
 if(migrating||verifying){
@@ -56,7 +57,7 @@ if(migrating||verifying){
  // Date freshness may mark snapshots stale on read; their original content
  // and every personal account field must remain unchanged.
  for(const key of ['profile','instruments','opening','account_context','plans','transactions','reports'])assert.deepEqual(cloud.state[key],(state as any)[key]);
- for(const [id,snapshot] of Object.entries(state.snapshots)){
+ for(const [id,snapshot] of verifyAccount?[]:Object.entries(state.snapshots)){
   const actual=cloud.state.snapshots[id];assert(actual);assert.equal(actual.snapshot_id,snapshot.snapshot_id);assert.deepEqual(actual.quote,snapshot.quote);assert.deepEqual(actual.history,snapshot.history);
  }
  const demo=await request!('/api/investment/bootstrap?space=demo');

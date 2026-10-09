@@ -4,6 +4,8 @@ import {database} from './d1-helper.ts';
 import {InvestmentStore} from '../lib/investment-store.ts';
 import {emptyInvestmentState,todayShanghai,type Snapshot} from '../lib/investment-domain.ts';
 import {handleInvestmentRequest} from '../lib/investment-api.ts';
+import {backupInvestmentAll,validateInvestmentBackup} from '../lib/investment-backup.ts';
+import {refreshInvestmentScheduled} from '../lib/investment-cron.ts';
 
 test('daily projection preserves authoritative history across writes, backups, exports and provider fallback',async()=>{
  const {db,sqlite}=database(),owner='synthetic-history-owner',store=new InvestmentStore(db,owner);
@@ -29,7 +31,12 @@ test('daily projection preserves authoritative history across writes, backups, e
  authoritative=JSON.parse((await store.fullStateText('personal')).state_json);assert.deepEqual(authoritative.snapshots[id].history,history);
  const exported=await handleInvestmentRequest(new Request('https://example.test/api/investment/export?space=personal'),store);
  const value=await exported.json() as any;assert.deepEqual(value.state.snapshots[id].history,history);assert.equal(value.version,2);
+ await validateInvestmentBackup(value,owner,'personal');
  await store.registerExport('personal','synthetic-market-binding',{instrument_id:null,report_type:'market',context_id:'synthetic-context',exported_at:new Date().toISOString()});
  const marketExport=JSON.parse((await store.fullStateText('personal')).state_json);assert.equal(marketExport.exports['synthetic-market-binding'].instrument_id,null);
  const marketBackup=await store.createBackup('personal');const loadedMarket=await store.loadBackup('personal',marketBackup.name);assert.equal(loadedMarket.envelope.state.exports['synthetic-market-binding'].instrument_id,null);
+ const mirrors:string[]=[];await backupInvestmentAll(db,{put:async(_key:string,value:string)=>{mirrors.push(value);}} as unknown as KVNamespace);
+ const mirror=JSON.parse(mirrors[0]);await validateInvestmentBackup(mirror,owner,'personal');assert.deepEqual(mirror.state.snapshots[id].history,history);assert.equal(mirror.state.exports['synthetic-market-binding'].instrument_id,null);
+ let scheduledCount=0;const scheduled=await refreshInvestmentScheduled(db,new Date('2026-10-09T01:35:00Z'),{fetchInvestmentSnapshot:(_item,prior)=>{scheduledCount++;return {...prior!,status:'stale'};}});
+ assert.equal(scheduledCount,1);assert.equal(scheduled.updated,1);assert.equal(JSON.parse((await store.fullStateText('personal')).state_json).snapshots[id].history.length,1800);
 });

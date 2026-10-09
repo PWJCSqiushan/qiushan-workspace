@@ -1,4 +1,4 @@
-import {InvestmentStore} from './investment-store.ts';
+import {InvestmentStore,type InvestmentMarketProvider} from './investment-store.ts';
 import * as market from './investment-market.ts';
 
 /** Weekday operating window, not a claim about the exchange holiday calendar. */
@@ -9,12 +9,12 @@ export function investmentRefreshDue(date:Date){
 }
 
 /** Bounded public-data refresh; account records and other boards are untouched. */
-export async function refreshInvestmentScheduled(db:D1Database,date=new Date()){
+export async function refreshInvestmentScheduled(db:D1Database,date=new Date(),provider:InvestmentMarketProvider=market){
  if(!investmentRefreshDue(date))return {skipped:'outside-window'};
  const rows=(await db.prepare("SELECT owner_id FROM investment_states WHERE space='personal' ORDER BY owner_id LIMIT 20").all<{owner_id:string}>()).results;
  if(!rows.length)return {skipped:'no-investment-account'};
  const slot=Math.floor(date.getTime()/300000),row=rows[slot%rows.length];
- const store=new InvestmentStore(db,row.owner_id,market);
+ const store=new InvestmentStore(db,row.owner_id,provider);
  const state=await store.snapshot('personal');
  const observed=state.instruments.filter(x=>x.watched!==false);
  if(!observed.length)return {skipped:'no-observations'};
