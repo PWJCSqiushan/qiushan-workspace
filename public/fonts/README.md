@@ -9,3 +9,12 @@ The Han and display sources were reused from existing local licensed copies. The
 Run scripts/build-qiushan-fonts.py --help for reproducible subset construction with fonttools and brotli. Supply the original font binaries and licenses. The build never deletes source or output files. fonts.css is self-hosted and uses font-display:swap and unicode-range, so the browser loads only needed shards. Do not preload all shards. Han is static regular; browser synthesis supplies stronger UI emphasis. Geist retains the variable weight axis.
 
 Finance charts use Qiushan Finance Display, a separately renamed full-coverage Smiley Sans v2.0.1 subset family. scripts/build-finance-display-font.py generates common UI and disjoint 256-character WOFF2 shards. Source: official GitHub release v2.0.1; hashes in finance-display-manifest.json. Geist supplies Latin and numeric glyphs; existing brand/other boards are unchanged.
+
+# PDF report font
+
+QiushanReportSans-Regular.ttf is a weight-400 static instance of Noto Sans SC.
+Source: https://github.com/notofonts/noto-cjk/blob/main/Sans/Variable/TTF/Subset/NotoSansSC-VF.ttf
+License: SIL Open Font License 1.1, included in OFL-NotoSansSC.txt.
+The font retains the full source character map. The derivative family name is
+Qiushan Report Sans. Regenerate with scripts/prepare-report-font.py and fontTools.
+Reports embed a subset of this font locally; no third-party font request occurs.

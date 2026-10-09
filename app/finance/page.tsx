@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
@@ -39,6 +39,9 @@ import { FinanceTransactions } from '@/components/finance-transactions';
 import { FinanceConflictReview } from '@/components/finance-conflict-review';
 import './finance.css';
 import './charts.css';
+import './pdf-export.css';
+
+const FinanceExportDialog = lazy(() => import('@/components/finance-export-dialog'));
 
 type Tab = 'charts' | 'overview' | 'meals' | 'transactions' | 'accounts';
 const tabs = [
@@ -63,6 +66,7 @@ export default function FinancePage() {
     [quick, setQuick] = useState(false),
     [message, setMessage] = useState(''),
     [pendingOpen, setPendingOpen] = useState(false),
+    [pdfOpen, setPdfOpen] = useState(false),
     [filter, setFilter] = useState<FinanceFilter>(),
     [reviewId, setReviewId] = useState<string>();
   useEffect(() => {
@@ -83,6 +87,9 @@ export default function FinancePage() {
   }, []);
   useEffect(() => {
     if (!ready) return;
+    // This modal belongs to the selected ledger's external-store lifecycle.
+    // oxlint-disable-next-line react/react-compiler
+    setPdfOpen(false);
     const c = new FinanceClient(space, () => redraw((n) => n + 1));
     // The external store has a lifecycle tied to the selected ledger.
     // oxlint-disable-next-line react/react-compiler
@@ -308,6 +315,7 @@ export default function FinancePage() {
               onDrill={drill}
               onSetup={() => setTab('accounts')}
               onImport={() => setImporting(true)}
+              onPdfExport={() => setPdfOpen(true)}
             />
           )}
           {tab === 'charts' && (
@@ -375,6 +383,7 @@ export default function FinancePage() {
           </button>
         </output>
       )}
+      {pdfOpen && client && <Suspense fallback={<div className="f-overlay"><div className="f-dialog"><output>正在打开报告配置…</output><button onClick={() => setPdfOpen(false)}>取消</button></div></div>}><FinanceExportDialog key={space} client={client} month={month} onClose={() => setPdfOpen(false)} /></Suspense>}
       {client && edit && (
         <FinanceTransactionEditor
           client={client}
