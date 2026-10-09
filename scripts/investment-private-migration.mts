@@ -14,13 +14,14 @@ assert.equal(sourceHash,expectedHash,'The authorized export changed; verify a ne
 const source=JSON.parse(bytes.toString('utf8')).data;
 assert(source&&typeof source==='object','Missing bootstrap data');
 const migrating=process.argv.includes('--migrate');
+const verifying=process.argv.includes('--verify-cloud');
 let owner='private-migration-validation',version=0;
 let request:((endpoint:string,payload?:unknown,method?:string)=>Promise<any>)|undefined;
-if(migrating){
+if(migrating||verifying){
  ({request}=await import('./investment-release-audit.mjs'));
  const session=await request!('/api/investment/session?space=personal');owner=session.owner;
  const cloud=await request!('/api/investment/bootstrap?space=personal');version=cloud.version;
- assert(!cloud.opening&&!cloud.transactions.length&&!cloud.plans.length&&!cloud.reports.length,'Cloud investment is already populated; do not overwrite it');
+ if(migrating)assert(!cloud.opening&&!cloud.transactions.length&&!cloud.plans.length&&!cloud.reports.length,'Cloud investment is already populated; do not overwrite it');
 }
 const state=emptyInvestmentState(owner,'personal');state.version=version;
 // Whitelist domain state; deliberately exclude source jobs, credentials, files,
@@ -44,10 +45,13 @@ assert.equal(summary.equity_curve.length,0);
 await mkdir(privateRoot,{recursive:true});
 await writeFile(privateRoot+'/investment-migration-backup.json',JSON.stringify(backup));
 const audit={source_sha256:sourceHash,prepared_at:new Date().toISOString(),counts:{instruments:state.instruments.length,snapshots:Object.keys(state.snapshots).length,positions:summary.positions.length,plans:state.plans.length,reports:state.reports.length,transactions:state.transactions.length},unknown_cost_preserved:true,external_cash_excluded_from_ledger:true,historical_curve_not_fabricated:true,migrated:false};
-if(migrating){
+if(migrating||verifying){
+ let result:{version:number}={version};
+ if(migrating){
  const operation_id=randomUUID();
  await writeFile(privateRoot+'/investment-migration-operation.json',JSON.stringify({operation_id,base_version:version}));
- const result=await request!('/api/investment/backups/restore?space=personal',{space:'personal',base_version:version,operation_id,backup});
+ result=await request!('/api/investment/backups/restore?space=personal',{space:'personal',base_version:version,operation_id,backup});
+ }
  const cloud=await request!('/api/investment/export?space=personal');
  // Date freshness may mark snapshots stale on read; their original content
  // and every personal account field must remain unchanged.

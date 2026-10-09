@@ -596,7 +596,7 @@ function App() {
       if (!isCurrent() || document.visibilityState !== 'visible' || jobsSeenRef.current.some(j => isActiveJob(j.status))) return
       try {
         const start = refreshRotationRef.current % instrumentIds.length
-        const batch = instrumentIds.slice(start, start + 4)
+        const batch = instrumentIds.slice(start, start + 1)
         refreshRotationRef.current = start + batch.length >= instrumentIds.length ? 0 : start + batch.length
         const started = await request<RefreshResult>('/refresh', { method: 'POST', body: JSON.stringify({ ids: batch, full: false }) }, undefined, versionRef.current)
         if (!isCurrent()) return
@@ -666,7 +666,7 @@ function App() {
   }
   const refresh = async (ids?: string[], full = false) => act('正在更新数据…', async () => {
     const targetIds = ids || instruments.map(item => item.id)
-    const batches: (string[] | undefined)[] = targetIds.length ? Array.from({ length: Math.ceil(targetIds.length / 4) }, (_, index) => targetIds.slice(index * 4, index * 4 + 4)) : [undefined]
+    const batches: (string[] | undefined)[] = targetIds.length ? targetIds.map(id => [id]) : [undefined]
     let processed = 0
     const targetEpoch = epochRef.current
     for (let index = 0; index < batches.length; index += 1) {

@@ -956,6 +956,7 @@ export function validateReportSections(reportType: 'market' | 'diagnosis', secti
 }
 
 export function validateState(state: InvestmentState) {
+  const validationDay=todayShanghai();
   if (!state || typeof state !== 'object' || state.schema_version !== 1 || !state.owner || !['personal', 'demo'].includes(state.space) || !Number.isSafeInteger(state.version) || state.version < 0) throw new InvestmentValidationError('投资状态无效');
   if (!Array.isArray(state.instruments) || !state.snapshots || typeof state.snapshots !== 'object' || Array.isArray(state.snapshots) || !Array.isArray(state.plans) || !Array.isArray(state.transactions) || !Array.isArray(state.reports) || !Array.isArray(state.jobs) || !Array.isArray(state.observations) || !state.exports || typeof state.exports !== 'object' || Array.isArray(state.exports)) throw new InvestmentValidationError('投资状态结构无效');
   if (state.instruments.length > 500 || state.transactions.length > 10000 || state.plans.length > 2000 || state.reports.length > 500 || state.jobs.length > 50 || Object.keys(state.snapshots).length > 500 || state.observations.length > 10000 || Object.keys(state.exports).length > 1000) throw new InvestmentValidationError('投资状态条目超过上限', 413);
@@ -980,7 +981,7 @@ export function validateState(state: InvestmentState) {
     let previousDate = '';
     for (const row of snapshot.history) {
       if (!row || typeof row !== 'object') throw new InvestmentValidationError('行情历史行无效');
-      validDate(row.date, '历史日期');
+      if(validCalendarDate(row.date,'历史日期')>validationDay)throw new InvestmentValidationError('历史日期不能在未来');
       if (row.date <= previousDate) throw new InvestmentValidationError('行情历史必须按日期升序且不重复');
       previousDate = row.date;
       for (const field of ['open', 'high', 'low', 'close', 'volume', 'amount'] as const) finiteNullable(row[field], `history.${field}`, field === 'close');

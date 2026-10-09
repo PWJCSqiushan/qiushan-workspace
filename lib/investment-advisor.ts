@@ -587,9 +587,9 @@ export function buildInvestmentAdvice(state: InvestmentState, asOf = todayShangh
     // run the shared freshness projection for already-stale rows so this pure
     // read stays aligned with the rest of the Worker domain without changing
     // that source ordering.
-    const sourceView = record(structuredClone(snapshot));
-    const freshView = freshness(snapshot, dateForFreshness(analysisDay));
-    if (sourceView.status === 'stale' && freshView?.status === 'stale') sourceView.status = 'stale';
+    // The advisor only reads fields. Avoid cloning every historical row; the
+    // caller already owns a coherent read snapshot and no field is mutated.
+    const sourceView = record(snapshot);
     return [id, sourceView];
   }));
   const portfolio = record(summarizeInvestment(state));

@@ -11,8 +11,8 @@ const ledgerKeys=['profile','instruments','opening','account_context','plans','t
 const digest=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const ids=before.state.instruments.filter(x=>x.watched!==false).map(x=>x.id);
 const jobs=[];
-for(let start=0;start<ids.length;start+=3){
- const batch=ids.slice(start,start+3);
+for(let start=0;start<ids.length;start+=1){
+ const batch=ids.slice(start,start+1);
  const current=await request('/api/investment/bootstrap?space=personal');
  const payload={space:'personal',base_version:current.version,operation_id:randomUUID(),ids:batch,full:false};
  await writeFile(root+'/refresh-operation-'+start+'.json',JSON.stringify(payload));
@@ -25,7 +25,7 @@ jobs.push(await request('/api/investment/refresh?space=personal',{space:'persona
 const after=await request('/api/investment/export?space=personal');
 const unchanged=Object.fromEntries(ledgerKeys.map(key=>[key,digest(before.state[key])===digest(after.state[key])]));
 assert(Object.values(unchanged).every(Boolean),'Refresh altered account records');
-const summary={captured_at:new Date().toISOString(),account_records_unchanged:unchanged,jobs:jobs.map(x=>({status:x.status,version:x.version})),snapshots:ids.map(id=>{const x=after.state.snapshots[id];return {id,status:x?.status,quote_as_of:x?.quote?.as_of,quote_source:x?.quote?.source,history_status:x?.history_status,history_as_of:x?.history_as_of,history_rows:x?.history?.length,error:x?.error,warnings:x?.warnings,source_attempts:x?.source_attempts};}),market:{status:after.state.market?.status,date:after.state.market?.date,source:after.state.market?.source,missing_fields:after.state.market?.missing_fields,warnings:after.state.market?.warnings},source_health:after.state.source_health};
+const summary={captured_at:new Date().toISOString(),account_records_unchanged:unchanged,jobs:jobs.map(x=>({status:x.status,version:x.version})),snapshots:ids.map(id=>{const x=after.state.snapshots[id];return {id,status:x?.status,quote_as_of:x?.as_of,quote_source:x?.quote_source||x?.source,history_source:x?.history_source,units:x?.units,history_status:x?.history_status,history_as_of:x?.history_as_of,history_rows:x?.history?.length,error:x?.error,warnings:x?.warnings,source_attempts:x?.source_attempts};}),market:{status:after.state.market?.status,date:after.state.market?.date,source:after.state.market?.source,missing_fields:after.state.market?.missing_fields,warnings:after.state.market?.warnings},source_health:after.state.source_health};
 await writeFile(root+'/investment-after-refresh.json',JSON.stringify(after));
 await writeFile(root+'/production-market-verification.json',JSON.stringify(summary,null,2));
 const advice=await request('/api/investment/advice?space=personal');

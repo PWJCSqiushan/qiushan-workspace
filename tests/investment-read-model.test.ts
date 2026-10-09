@@ -1,0 +1,35 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {database} from './d1-helper.ts';
+import {InvestmentStore} from '../lib/investment-store.ts';
+import {emptyInvestmentState,todayShanghai,type Snapshot} from '../lib/investment-domain.ts';
+import {handleInvestmentRequest} from '../lib/investment-api.ts';
+
+test('daily projection preserves authoritative history across writes, backups, exports and provider fallback',async()=>{
+ const {db,sqlite}=database(),owner='synthetic-history-owner',store=new InvestmentStore(db,owner);
+ const state=emptyInvestmentState(owner,'personal'),id='stock:SH:600000',day=todayShanghai();
+ state.instruments=[{id,code:'600000',exchange:'SH',kind:'stock',name:'合成长历史测试'}];
+ const end=Date.parse(day+'T00:00:00Z');
+ const history=Array.from({length:1800},(_,i)=>({date:new Date(end-(1799-i)*86400000).toISOString().slice(0,10),open:10,high:11,low:9,close:10+i/10000,volume:100,amount:1000}));
+ const snapshot:Snapshot={snapshot_id:'synthetic-long-history',instrument_id:id,source:'synthetic-official-source',source_url:'https://example.test/history',as_of:day,fetched_at:new Date().toISOString(),status:'fresh',error:null,quote:{price:11,change_pct:0,open:10,high:11,low:9,preclose:10,volume:100,amount:1000},history,adjustment:'none',valuation_kind:'market_price',metrics:{ma20:10,ma60:10,return_20d:0,range_120d:50,history_count:history.length},fundamentals:[],evidence:[],warnings:[]};
+ state.snapshots[id]=snapshot;
+ sqlite.prepare('INSERT INTO investment_states(owner_id,space,version,state_json,updated_at) VALUES(?,?,?,?,?)').run(owner,'personal',0,JSON.stringify(state),new Date().toISOString());
+ const daily=await store.snapshot('personal');assert.equal(daily.snapshots[id].history.length,61);assert.deepEqual(daily.snapshots[id].history,history.slice(-61));
+ const decision=(await store.readBootstrap('personal')).advice.watchlist[0].decision_id;
+ const saved=await handleInvestmentRequest(new Request('https://example.test/api/investment/advice/plans?space=personal',{method:'POST',headers:{origin:'https://example.test','content-type':'application/json'},body:JSON.stringify({space:'personal',base_version:0,operation_id:'save-projected-advice',instrument_id:id,decision_id:decision})}),store);
+ assert.equal(saved.status,200);
+ let authoritative=JSON.parse((await store.fullStateText('personal')).state_json);
+ assert.deepEqual(authoritative.snapshots[id],snapshot);assert.equal(authoritative.plans.length,1);
+ assert(!('history_windowed' in authoritative.snapshots[id]));
+ const backup=(await store.backups('personal'))[0];
+ const loaded=await store.loadBackup('personal',backup.name);assert.deepEqual(loaded.envelope.state.snapshots[id].history,history);
+ assert.deepEqual((await store.fullSnapshot('personal',id))!.history,history);
+ let received=0;const providerStore=new InvestmentStore(db,owner,{fetchInvestmentSnapshot:(_item,previous)=>{received=previous!.history.length;return {...previous!,status:'stale',error:'synthetic source failed'};}});
+ await providerStore.refresh('personal',{base_version:1,operation_id:'fallback-all-history',ids:[id]});assert.equal(received,1800);
+ authoritative=JSON.parse((await store.fullStateText('personal')).state_json);assert.deepEqual(authoritative.snapshots[id].history,history);
+ const exported=await handleInvestmentRequest(new Request('https://example.test/api/investment/export?space=personal'),store);
+ const value=await exported.json() as any;assert.deepEqual(value.state.snapshots[id].history,history);assert.equal(value.version,2);
+ await store.registerExport('personal','synthetic-market-binding',{instrument_id:null,report_type:'market',context_id:'synthetic-context',exported_at:new Date().toISOString()});
+ const marketExport=JSON.parse((await store.fullStateText('personal')).state_json);assert.equal(marketExport.exports['synthetic-market-binding'].instrument_id,null);
+ const marketBackup=await store.createBackup('personal');const loadedMarket=await store.loadBackup('personal',marketBackup.name);assert.equal(loadedMarket.envelope.state.exports['synthetic-market-binding'].instrument_id,null);
+});

@@ -41,8 +41,13 @@ export async function handleInvestmentRequest(request:Request,store:InvestmentSt
    if(action==='health')return json({status:'ok',runtime:'cloudflare-worker',space:querySpace});
    if(action===''||action==='bootstrap')return json({...await store.readBootstrap(querySpace),owner:store.owner});
    if(action==='search')return json({items:await store.search(querySpace,url.searchParams.get('q')||'')});
+   if(action==='export'){
+    const row=await store.fullStateText(querySpace),digest=await sha256(row.state_json);
+    return new Response(`{"schema_version":1,"owner":${JSON.stringify(store.owner)},"space":${JSON.stringify(querySpace)},"version":${row.version},"state":${row.state_json},"state_sha256":${JSON.stringify(digest)}}`,{headers:{'content-type':'application/json','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
+   }
+   if(parts[0]==='instruments'&&parts[2]==='snapshot'&&parts.length===3){const snapshot=await store.fullSnapshotText(querySpace,parts[1]);if(!snapshot)throw new InvestmentValidationError('还没有行情快照，请先刷新',404);return new Response(snapshot,{headers:{'content-type':'application/json','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});}
    const state=await store.snapshot(querySpace);
-   if(action==='advice')return json(await buildInvestmentAdvice(state));
+   if(action==='advice')return json(await store.advice(state));
    if(action==='instruments'||action==='watchlist')return json(state.instruments.filter(x=>x.watched!==false));
    if(parts[0]==='instruments'&&parts[2]==='snapshot'&&parts.length===3){instrument(state,parts[1]);const snapshot=freshness(state.snapshots[parts[1]]);if(!snapshot)throw new InvestmentValidationError('还没有行情快照，请先刷新',404);return json(snapshot);}
    if(parts[0]==='jobs'&&parts.length===2){const job=state.jobs.find(x=>x.id===parts[1]);if(!job)throw new InvestmentValidationError('刷新任务不存在',404);return json(job);}
@@ -68,7 +73,7 @@ export async function handleInvestmentRequest(request:Request,store:InvestmentSt
    if(action==='analysis-package'){
     const type=url.searchParams.get('type')||'market';if(type!=='market'&&type!=='diagnosis')throw new InvestmentValidationError('报告类型无效');
     const item=type==='diagnosis'?instrument(state,url.searchParams.get('instrument_id')):null;
-    const snapshot=item?freshness(state.snapshots[item.id]):currentMarket(state);
+    const snapshot=item?await store.fullSnapshot(querySpace,item.id):currentMarket(state);
     if(item&&!snapshot)throw new InvestmentValidationError('尚无数据快照，请先刷新');
     const snapshotId=snapshot?.snapshot_id||'market:missing',context=contextId(state),stamp=now();
     const template={report_type:type,instrument_id:item?.id||null,snapshot_id:snapshotId,context_id:context,conclusion:'待补充',score:null,strategy:'待补充',position_range:'待补充',sections:(type==='market'?MARKET_SECTIONS:DIAGNOSIS_SECTIONS).map(title=>({title,body:'待补充'})),sources:[]};
@@ -96,7 +101,7 @@ export async function handleInvestmentRequest(request:Request,store:InvestmentSt
   }
   return json(await store.mutate(space,input,async state=>{
    if(action==='advice/plans'&&method==='POST'){
-    const decision=text(payload.decision_id,'建议身份',150,true),advice=await buildInvestmentAdvice(state);
+    const decision=text(payload.decision_id,'建议身份',150,true),advice=await store.advice(state);
     const item=[...advice.holdings,...advice.watchlist].find(x=>x.instrument_id===payload.instrument_id);
     if(!item)throw new InvestmentValidationError('该品种没有当前自动建议，请先加入自选并更新数据',404);
     if(item.decision_id!==decision)throw new InvestmentConflictError('行情、账户或规则已更新，请刷新后重新查看建议');

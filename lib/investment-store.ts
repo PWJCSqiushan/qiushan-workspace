@@ -1,5 +1,6 @@
 import { sha256, stable } from './protocol.ts';
-import {buildInvestmentAdvice} from './investment-advisor.ts';
+import {buildInvestmentAdvice,INVESTMENT_ADVICE_RULE_VERSION} from './investment-advisor.ts';
+import {investmentReadState,investmentPersistState,investmentExportState} from './investment-read-model.ts';
 import {
   DEFAULT_PROFILE,
   InvestmentConflictError,
@@ -120,7 +121,7 @@ export class InvestmentStore {
   private async row(space: InvestmentSpace) {
     await this.ensure(space);
     return (await this.q(
-      'SELECT version,state_json,updated_at FROM investment_states WHERE owner_id=? AND space=?',
+      `SELECT version,${investmentReadState} AS state_json,updated_at FROM investment_states WHERE owner_id=? AND space=?`,
       this.owner,
       space,
     ).first<StateRow>())!;
@@ -150,10 +151,48 @@ export class InvestmentStore {
     state.exports ||= {};
     const bindings=await this.q('SELECT snapshot_id,binding_json FROM investment_export_bindings WHERE owner_id=? AND space=?',this.owner,space).all<{snapshot_id:string;binding_json:string}>();
     for(const binding of bindings.results)state.exports[binding.snapshot_id]=JSON.parse(binding.binding_json);
-    state.snapshots = Object.fromEntries(Object.entries(state.snapshots).map(([id, snapshot]) => [id, freshness(snapshot)!]));
+    const day=todayShanghai();
+    for(const snapshot of Object.values(state.snapshots))if(snapshot.status==='fresh'&&snapshot.as_of&&snapshot.as_of.slice(0,10)!==day)snapshot.status='stale';
     state.market = freshMarket(state.market);
+    // Validate the bounded read model; full state was checked on write and is
+    // protected by the D1 size trigger without parsing every historical row.
     validateState(state);
     return state;
+  }
+
+  async fullStateText(space:InvestmentSpace){
+    await this.ensure(space);
+    return (await this.q(`SELECT version,${investmentExportState} AS state_json,updated_at FROM investment_states WHERE owner_id=? AND space=?`,this.owner,space).first<StateRow>())!;
+  }
+
+  async fullSnapshotText(space:InvestmentSpace,id:string){
+    await this.ensure(space);
+    const row=await this.q(`SELECT
+      EXISTS(SELECT 1 FROM json_each(i.state_json,'$.instruments') n WHERE json_extract(n.value,'$.id')=?) AS known,
+      (SELECT json_set(s.value,'$.status',CASE WHEN json_extract(s.value,'$.status')='fresh' AND substr(json_extract(s.value,'$.as_of'),1,10)<>? THEN 'stale' ELSE json_extract(s.value,'$.status') END)
+       FROM json_each(i.state_json,'$.snapshots') s WHERE s.key=?) AS snapshot_json
+      FROM investment_states i WHERE i.owner_id=? AND i.space=?`,id,todayShanghai(),id,this.owner,space).first<{known:number;snapshot_json:string|null}>();
+    if(!row?.known)throw new InvestmentValidationError('未知品种，需选择完整品种身份',404);
+    return row.snapshot_json;
+  }
+
+  async fullSnapshot(space:InvestmentSpace,id:string){
+    const text=await this.fullSnapshotText(space,id);
+    return text?JSON.parse(text) as Snapshot:null;
+  }
+
+  async advice(state:InvestmentState){
+    const date=todayShanghai();
+    const cached=await this.q('SELECT advice_json FROM investment_advice_cache WHERE owner_id=? AND space=? AND version=? AND analysis_date=? AND rule_version=?',this.owner,state.space,state.version,date,INVESTMENT_ADVICE_RULE_VERSION).first<{advice_json:string}>();
+    if(cached)return JSON.parse(cached.advice_json) as ReturnType<typeof buildInvestmentAdvice>;
+    const value=buildInvestmentAdvice(state,date);
+    // The cache belongs to this exact state version/date/rule. A concurrent
+    // mutation cannot publish a stale result over the current cache.
+    await this.q(`INSERT INTO investment_advice_cache(owner_id,space,version,analysis_date,rule_version,advice_json)
+      SELECT ?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM investment_states WHERE owner_id=? AND space=? AND version=?)
+      ON CONFLICT(owner_id,space) DO UPDATE SET version=excluded.version,analysis_date=excluded.analysis_date,rule_version=excluded.rule_version,advice_json=excluded.advice_json`,
+      this.owner,state.space,state.version,date,INVESTMENT_ADVICE_RULE_VERSION,JSON.stringify(value),this.owner,state.space,state.version).run();
+    return value;
   }
 
   async version(space: InvestmentSpace) {
@@ -207,9 +246,10 @@ export class InvestmentStore {
       // so a stale writer cannot leave a committed state without a receipt.
       const statements=[
         this.q(
-          'UPDATE investment_states SET version=?,state_json=?,updated_at=? WHERE owner_id=? AND space=? AND version=?',
+          `UPDATE investment_states SET version=?,state_json=${options.replaceExportBindings?'?':investmentPersistState},updated_at=? WHERE owner_id=? AND space=? AND version=?`,
           draft.version,
           stateText,
+          ...(!options.replaceExportBindings?[stateText]:[]),
           now(),
           this.owner,
           space,
@@ -229,6 +269,7 @@ export class InvestmentStore {
       if(options.replaceExportBindings)statements.push(this.q('DELETE FROM investment_export_bindings WHERE owner_id=? AND space=?',this.owner,space));
       await this.db.batch(statements);
     } catch (error) {
+      if(error instanceof Error&&error.message.includes('INVESTMENT_STATE_TOO_LARGE'))throw new InvestmentValidationError('投资账本不能超过2MB',413);
       const replay = await this.priorOperation(space, input.operation_id, requestHash);
       if (replay) return replay as InvestmentMutationReceipt<T>;
       const latest = await this.snapshot(space);
@@ -244,11 +285,12 @@ export class InvestmentStore {
     const state = await this.snapshot(space);
     const snapshots = state.snapshots;
     const market = state.market;
+    const context=contextId(state);
     const reports = state.reports.map((report) => {
       const currentSnapshot = report.report_type === 'market' ? market : snapshots[report.instrument_id || ''];
       return {
         ...report,
-        is_stale: report.snapshot_id !== currentSnapshot?.snapshot_id || currentSnapshot?.status !== 'fresh' || report.context_id !== contextId(state),
+        is_stale: report.snapshot_id !== currentSnapshot?.snapshot_id || currentSnapshot?.status !== 'fresh' || report.context_id !== context,
       };
     });
     return {
@@ -264,7 +306,7 @@ export class InvestmentStore {
       portfolio: summarizeInvestment({ ...state, snapshots }),
       jobs: [...state.jobs].reverse().slice(0, 10),
       source_health: state.source_health,
-      advice:await buildInvestmentAdvice(state),
+      advice:await this.advice(state),
       version: state.version,
       space,
       sample_notice: state.sample_notice,
@@ -292,8 +334,9 @@ export class InvestmentStore {
   }
 
   async createBackup(space: InvestmentSpace, suppliedName?: string) {
-    const state = await this.snapshot(space);
-    const payload = JSON.stringify({ owner: this.owner, space, version: state.version, state });
+    const row=await this.fullStateText(space);
+    const state={version:Number(row.version)};
+    const payload = `{"owner":${JSON.stringify(this.owner)},"space":${JSON.stringify(space)},"version":${state.version},"state":${row.state_json}}`;
     const digest = await sha256(payload);
     const name = suppliedName || `${todayShanghai().replaceAll('-', '')}-${new Date().toISOString().slice(11, 19).replaceAll(':', '')}-${crypto.randomUUID().replaceAll('-', '').slice(0, 8)}.json`;
     if (!namePattern.test(name)) throw new InvestmentValidationError('备份名称无效');
@@ -385,7 +428,10 @@ export class InvestmentStore {
         for (let i = 0; i < selected.length; i++) {
           const instrument = selected[i];
           try {
-            const value = await withTimeout(provider.fetchInvestmentSnapshot(instrument, state.snapshots[instrument.id]), 12_000);
+            // Give the provider the authoritative history, rather than the
+            // daily read window, so a failed source can retain every old row.
+            const previous=await this.fullSnapshot(space,instrument.id);
+            const value = await withTimeout(provider.fetchInvestmentSnapshot(instrument, previous||undefined), 12_000);
             if (value) {
               value.warnings=[...new Set(value.warnings)].slice(-80);
               const trace=value as Snapshot&{source_attempts?:unknown[]};if(Array.isArray(trace.source_attempts))trace.source_attempts=trace.source_attempts.slice(-30);
