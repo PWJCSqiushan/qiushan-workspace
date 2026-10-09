@@ -1,4 +1,5 @@
 import { sha256, stable } from './protocol.ts';
+import {buildInvestmentAdvice} from './investment-advisor.ts';
 import {
   DEFAULT_PROFILE,
   InvestmentConflictError,
@@ -180,7 +181,7 @@ export class InvestmentStore {
     space: InvestmentSpace,
     input: { base_version: number; operation_id: string; [key: string]: unknown },
     apply: (state: InvestmentState) => T | Promise<T>,
-    options: { backupBefore?: boolean } = {},
+    options: { backupBefore?: boolean; replaceExportBindings?:boolean } = {},
   ): Promise<InvestmentMutationReceipt<T>> {
     spaceCheck(space);
     versionCheck(input?.base_version);
@@ -204,7 +205,7 @@ export class InvestmentStore {
       // Keep the CAS update and its idempotency receipt in one D1 batch. The
       // CASE/NOT NULL guard makes a zero-row version update abort the batch,
       // so a stale writer cannot leave a committed state without a receipt.
-      await this.db.batch([
+      const statements=[
         this.q(
           'UPDATE investment_states SET version=?,state_json=?,updated_at=? WHERE owner_id=? AND space=? AND version=?',
           draft.version,
@@ -224,7 +225,9 @@ export class InvestmentStore {
           draft.version,
           now(),
         ),
-      ]);
+      ];
+      if(options.replaceExportBindings)statements.push(this.q('DELETE FROM investment_export_bindings WHERE owner_id=? AND space=?',this.owner,space));
+      await this.db.batch(statements);
     } catch (error) {
       const replay = await this.priorOperation(space, input.operation_id, requestHash);
       if (replay) return replay as InvestmentMutationReceipt<T>;
@@ -261,6 +264,7 @@ export class InvestmentStore {
       portfolio: summarizeInvestment({ ...state, snapshots }),
       jobs: [...state.jobs].reverse().slice(0, 10),
       source_health: state.source_health,
+      advice:await buildInvestmentAdvice(state),
       version: state.version,
       space,
       sample_notice: state.sample_notice,
@@ -340,7 +344,11 @@ export class InvestmentStore {
     validateState(state);
     // Export metadata has its own row so GET requests never overwrite a
     // concurrent ledger write or another exported snapshot's binding.
-    await this.q('INSERT INTO investment_export_bindings(owner_id,space,snapshot_id,binding_json) VALUES(?,?,?,?) ON CONFLICT(owner_id,space,snapshot_id) DO UPDATE SET binding_json=excluded.binding_json',this.owner,space,snapshotId,JSON.stringify(binding)).run();
+    const result=await this.q(`INSERT INTO investment_export_bindings(owner_id,space,snapshot_id,binding_json)
+      SELECT ?,?,?,? WHERE EXISTS(SELECT 1 FROM investment_export_bindings WHERE owner_id=? AND space=? AND snapshot_id=?)
+      OR (SELECT COUNT(*) FROM (SELECT key FROM json_each((SELECT state_json FROM investment_states WHERE owner_id=? AND space=?),'$.exports') UNION SELECT snapshot_id FROM investment_export_bindings WHERE owner_id=? AND space=?))<1000
+      ON CONFLICT(owner_id,space,snapshot_id) DO UPDATE SET binding_json=excluded.binding_json`,this.owner,space,snapshotId,JSON.stringify(binding),this.owner,space,snapshotId,this.owner,space,this.owner,space).run();
+    if(result.meta.changes!==1)throw new InvestmentValidationError('分析包绑定数量超过上限',413);
     return binding;
   }
 
@@ -378,7 +386,11 @@ export class InvestmentStore {
           const instrument = selected[i];
           try {
             const value = await withTimeout(provider.fetchInvestmentSnapshot(instrument, state.snapshots[instrument.id]), 12_000);
-            if (value) { state.snapshots[instrument.id] = value; count++; if(value.status!=='fresh'||value.error||value.history_status==='missing'||value.history_status==='stale'||value.warnings.some(w=>/获取失败|沿用.*缓存/.test(w)))failed++; }
+            if (value) {
+              value.warnings=[...new Set(value.warnings)].slice(-80);
+              const trace=value as Snapshot&{source_attempts?:unknown[]};if(Array.isArray(trace.source_attempts))trace.source_attempts=trace.source_attempts.slice(-30);
+              state.snapshots[instrument.id] = value; count++; if(value.status!=='fresh'||value.error||value.history_status==='missing'||value.history_status==='stale'||value.warnings.some(w=>/获取失败|沿用.*缓存/.test(w)))failed++;
+            }
             else throw new Error('市场 worker 未返回快照');
             job.progress = Math.min(99, Math.floor(((i + 1) / Math.max(1, selected.length)) * 100));
           } catch (error) {
@@ -392,6 +404,8 @@ export class InvestmentStore {
           try {
             const market = await withTimeout(provider.refreshInvestmentMarket(state.market), 12_000);
             if (!market) throw new Error('市场 worker 未返回市场快照');
+            market.warnings=[...new Set(market.warnings)].slice(-80);
+            const trace=market as Market&{source_attempts?:unknown[]};if(Array.isArray(trace.source_attempts))trace.source_attempts=trace.source_attempts.slice(-30);
             state.market = market;
             if(market.status!=='fresh'||market.missing_fields.length)failed++;
           } catch (error) {

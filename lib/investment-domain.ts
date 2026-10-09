@@ -1008,6 +1008,7 @@ export function validateState(state: InvestmentState) {
   for (const plan of state.plans) {
     if (!plan || typeof plan !== 'object' || typeof plan.id !== 'string' || !idPattern.test(plan.id) || planIds.has(plan.id) || !imap.has(plan.instrument_id) || !['observe', 'consider', 'no_trade'].includes(plan.action)) throw new InvestmentValidationError('预案结构无效');
     planIds.add(plan.id);
+    if(plan.decision_id!==undefined&&(typeof plan.decision_id!=='string'||!plan.decision_id.length||plan.decision_id.length>150))throw new InvestmentValidationError('预案建议身份无效');
     validPlanDate(plan.date, '预案日期');
     for (const field of ['observation', 'buy_condition', 'exit_condition', 'invalidation', 'notes']) if (typeof plan[field as keyof Plan] !== 'string' || (plan[field as keyof Plan] as string).length > 5000) throw new InvestmentValidationError('预案文本长度无效');
     if (plan.budget !== null && (typeof plan.budget !== 'number' || !Number.isFinite(plan.budget) || plan.budget < 0)) throw new InvestmentValidationError('预案预算无效');

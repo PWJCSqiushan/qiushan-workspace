@@ -7,6 +7,21 @@ import { todayShanghai, type Instrument } from '../lib/investment-domain.ts';
 
 const stock: Instrument = { id: 'stock:SH:600000', code: '600000', name: '合成测试股票', kind: 'stock', exchange: 'SH' };
 
+test('automatic advice recomputes server-side, saves one protected plan and rejects outdated decisions',async()=>{
+ const {db}=database(),store=new InvestmentStore(db,'advice-owner');
+ const bootstrap=await call(store,'/api/investment/bootstrap?space=demo');assert.equal(bootstrap.value.advice.engine.validation,'unvalidated');assert.equal(bootstrap.value.advice.market.score,null);
+ const advice=(await call(store,'/api/investment/advice?space=demo')).value,item=advice.watchlist[0];assert(item);assert.equal(item.plan.budget,null);
+ const before=await store.snapshot('demo'),ledger=JSON.stringify({opening:before.opening,transactions:before.transactions});
+ let r=await call(store,'/api/investment/advice/plans?space=demo','POST',{space:'demo',base_version:before.version,operation_id:'advice-save',instrument_id:item.instrument_id,decision_id:item.decision_id,action:'buy',budget:999999});
+ assert.equal(r.response.status,200);assert.equal(r.value.budget,null);assert.equal(r.value.action,item.plan.action);const planId=r.value.id;
+ assert.equal((await store.backups('demo')).length,1);
+ r=await call(store,'/api/investment/advice/plans?space=demo','POST',{space:'demo',base_version:r.value.version,operation_id:'advice-save-again',instrument_id:item.instrument_id,decision_id:item.decision_id});assert.equal(r.response.status,200);assert.equal(r.value.id,planId);
+ assert.equal((await store.backups('demo')).length,1);assert.equal((await store.snapshot('demo')).plans.length,1);
+ const after=await store.snapshot('demo');assert.equal(JSON.stringify({opening:after.opening,transactions:after.transactions}),ledger);
+ await store.mutate('demo',{base_version:after.version,operation_id:'advice-context-change'},s=>{s.profile.purpose='修改合成资金用途';return {};});
+ r=await call(store,'/api/investment/advice/plans?space=demo','POST',{space:'demo',base_version:after.version+1,operation_id:'advice-stale',instrument_id:item.instrument_id,decision_id:item.decision_id});assert.equal(r.response.status,409);assert.equal((await store.snapshot('demo')).plans.length,1);
+});
+
 test('opening and account context are protected; removing a sold holding preserves ledger identity',async()=>{
  const {db}=database(),store=new InvestmentStore(db,'protected-owner');
  let r=await call(store,'/api/investment/watchlist','POST',{base_version:0,operation_id:'protect-add',...stock});

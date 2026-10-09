@@ -6,6 +6,7 @@ import {validateInvestmentBackup} from './investment-backup.ts';
 import {InvestmentValidationError,InvestmentConflictError,validateInstrument,validateProfile,validateAccountContext,validateOpening,validateTransactionInput,validPlanDate,validDate,numeric,replayTransactions,summarizeInvestment,contextId,orderCheck,freshness,validateReportSections,reportScoreLabel,MARKET_SECTIONS,DIAGNOSIS_SECTIONS,todayShanghai} from './investment-domain.ts';
 import type {InvestmentState,InvestmentSpace,Instrument,Snapshot,Plan,InvestmentReport,Transaction} from './investment-domain.ts';
 import * as market from './investment-market.ts';
+import {buildInvestmentAdvice} from './investment-advisor.ts';
 
 type Input=Record<string,unknown>&{base_version:number;operation_id:string};
 const idPattern=/^[A-Za-z0-9_-]{1,120}$/;
@@ -41,6 +42,7 @@ export async function handleInvestmentRequest(request:Request,store:InvestmentSt
    if(action===''||action==='bootstrap')return json({...await store.readBootstrap(querySpace),owner:store.owner});
    if(action==='search')return json({items:await store.search(querySpace,url.searchParams.get('q')||'')});
    const state=await store.snapshot(querySpace);
+   if(action==='advice')return json(await buildInvestmentAdvice(state));
    if(action==='instruments'||action==='watchlist')return json(state.instruments.filter(x=>x.watched!==false));
    if(parts[0]==='instruments'&&parts[2]==='snapshot'&&parts.length===3){instrument(state,parts[1]);const snapshot=freshness(state.snapshots[parts[1]]);if(!snapshot)throw new InvestmentValidationError('还没有行情快照，请先刷新',404);return json(snapshot);}
    if(parts[0]==='jobs'&&parts.length===2){const job=state.jobs.find(x=>x.id===parts[1]);if(!job)throw new InvestmentValidationError('刷新任务不存在',404);return json(job);}
@@ -90,9 +92,19 @@ export async function handleInvestmentRequest(request:Request,store:InvestmentSt
   if(action==='backups'&&method==='POST')return json(await store.mutate(space,input,async()=>({...await store.createBackup(space)})));
   if(action==='backups/restore'&&method==='POST'){
    const restored=payload.backup?await validateInvestmentBackup(payload.backup,store.owner,space):(await store.loadBackup(space,text(payload.name,'备份名称',100,true))).envelope.state;
-   return json(await store.mutate(space,input,state=>{Object.assign(state,structuredClone(restored));state.owner=store.owner;state.space=space;return {restored:true};},{backupBefore:true}));
+   return json(await store.mutate(space,input,state=>{Object.assign(state,structuredClone(restored));state.owner=store.owner;state.space=space;return {restored:true};},{backupBefore:true,replaceExportBindings:true}));
   }
   return json(await store.mutate(space,input,async state=>{
+   if(action==='advice/plans'&&method==='POST'){
+    const decision=text(payload.decision_id,'建议身份',150,true),advice=await buildInvestmentAdvice(state);
+    const item=[...advice.holdings,...advice.watchlist].find(x=>x.instrument_id===payload.instrument_id);
+    if(!item)throw new InvestmentValidationError('该品种没有当前自动建议，请先加入自选并更新数据',404);
+    if(item.decision_id!==decision)throw new InvestmentConflictError('行情、账户或规则已更新，请刷新后重新查看建议');
+    const prior=state.plans.find(x=>x.decision_id===decision&&x.instrument_id===item.instrument_id);if(prior)return {...prior};
+    await store.createBackup(space);
+    const stamp=now();const plan:Plan={...item.plan,id:crypto.randomUUID(),decision_id:decision,instrument_id:item.instrument_id,date:validDate(advice.as_of),budget:null,created_at:stamp,updated_at:stamp};
+    state.plans.push(plan);return {...plan};
+   }
    if((action==='watchlist'||action==='instruments')&&method==='POST'){
     const item=validateInstrument({...payload,id:payload.id||`${payload.kind}:${payload.exchange}:${payload.code}`});
     item.personalized=true;item.watched=true;
@@ -126,7 +138,7 @@ export async function handleInvestmentRequest(request:Request,store:InvestmentSt
     const budget=payload.budget===undefined||payload.budget===null?null:numeric(payload.budget,'budget');if(budget!==null&&budget<0)throw new InvestmentValidationError('预案预算不能为负数');
     const id=payload.id===undefined?crypto.randomUUID():text(payload.id,'预案id',120,true);if(!idPattern.test(id))throw new InvestmentValidationError('预案id无效');
     const prior=state.plans.find(x=>x.id===id);if(prior&&prior.instrument_id!==item.id)throw new InvestmentValidationError('不能改变既有预案的品种身份');
-    const plan:Plan={id,instrument_id:item.id,date,action:payload.action as Plan['action'],observation:text(payload.observation,'观察'),buy_condition:text(payload.buy_condition,'买入条件'),exit_condition:text(payload.exit_condition,'退出条件'),invalidation:text(payload.invalidation,'证伪条件'),budget,notes:text(payload.notes,'备注'),created_at:prior?.created_at||now(),updated_at:now()};
+    const plan:Plan={...(prior?.decision_id?{decision_id:prior.decision_id}:{}),id,instrument_id:item.id,date,action:payload.action as Plan['action'],observation:text(payload.observation,'观察'),buy_condition:text(payload.buy_condition,'买入条件'),exit_condition:text(payload.exit_condition,'退出条件'),invalidation:text(payload.invalidation,'证伪条件'),budget,notes:text(payload.notes,'备注'),created_at:prior?.created_at||now(),updated_at:now()};
     state.plans=state.plans.filter(x=>x.id!==id);state.plans.push(plan);return {...plan};
    }
    if(action==='transactions'&&method==='POST'){
