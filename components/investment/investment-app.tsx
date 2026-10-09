@@ -8,6 +8,8 @@ import { BarChart, LineChart, PieChart } from 'echarts/charts'
 import { DataZoomComponent, GridComponent, TooltipComponent, LegendComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import { BoardSwitch } from '@/components/board-switch'
+import DecisionDashboard from './decision-dashboard'
+import type { AdviceBundle, InstrumentAdvice } from './advice'
 import {
   Activity, ArrowDownLeft, ArrowLeftRight, ArrowUpRight, BarChart3, Bell, BookOpen,
   BriefcaseBusiness, CalendarDays, Check, ChevronDown, CircleHelp, Clock3, CloudDownload,
@@ -48,7 +50,7 @@ type Opening = { date: string; cash: number; initial_equity: number; positions: 
 type Plan = { id?: string; instrument_id: string; date: string; action: 'observe' | 'consider' | 'no_trade'; observation?: string; buy_condition?: string; exit_condition?: string; invalidation?: string; budget?: number | null; notes?: string; created_at?: string }
 type Transaction = { id?: string; instrument_id?: string; kind: string; date: string; quantity?: number; price?: number; amount?: number; fees?: number; notes?: string; plan_id?: string; pending_id?: string; created_at?: string }
 type Job = { id: string; status: string; progress?: number; message?: string; error?: string; started_at?: string; finished_at?: string }
-type Bootstrap = { version?: number; space?: Space; owner?: string; profile: Profile; instruments: Instrument[]; snapshots: Record<string, Snapshot>; market: Market | null; plans: Plan[]; reports: Report[]; transactions: Transaction[]; portfolio: Portfolio; opening?: Opening | null; account_context?: AccountContext | null; jobs: Job[]; source_health: { name?: string; provider?: string; source?: string; status?: string; last_error?: string; cooldown_until?: string }[] }
+type Bootstrap = { version?: number; space?: Space; owner?: string; advice?: AdviceBundle | null; profile: Profile; instruments: Instrument[]; snapshots: Record<string, Snapshot>; market: Market | null; plans: Plan[]; reports: Report[]; transactions: Transaction[]; portfolio: Portfolio; opening?: Opening | null; account_context?: AccountContext | null; jobs: Job[]; source_health: { name?: string; provider?: string; source?: string; status?: string; last_error?: string; cooldown_until?: string }[] }
 type RefreshResult = { job_id?: string; status?: string; version?: number; new_version?: number; space?: Space }
 type Tab = 'today' | 'diagnosis' | 'plan' | 'assets' | 'funds' | 'learn'
 
@@ -123,7 +125,7 @@ async function api<T>(path: string, init: RequestInit | undefined, options: ApiO
   let body: unknown
   try { body = text ? JSON.parse(text) : {} } catch { body = text }
   if (!response.ok) {
-    const detail = typeof body === 'object' && body && 'detail' in body ? String((body as { detail: unknown }).detail) : typeof body === 'string' ? body : response.statusText
+    const detail = typeof body === 'object' && body && 'detail' in body ? String((body as { detail: unknown }).detail) : typeof body === 'object' && body && 'error' in body ? String((body as { error: unknown }).error) : typeof body === 'string' ? body : response.statusText
     throw new InvestmentApiError(detail || `请求失败 (${response.status})`, response.status, body)
   }
   return body as T
@@ -155,7 +157,7 @@ function writeInvestmentOutbox(owner: string, space: Space, value: PendingMutati
 }
 
 const nav: { id: Tab; label: string; icon: typeof LayoutDashboard; detail: string }[] = [
-  { id: 'today', label: '今日', icon: LayoutDashboard, detail: '市场与自选' },
+  { id: 'today', label: '今日建议', icon: LayoutDashboard, detail: '自动分析与持仓行动' },
   { id: 'diagnosis', label: '体检', icon: HeartPulse, detail: '单品数据诊断' },
   { id: 'plan', label: '预案', icon: CalendarDays, detail: '写下条件再行动' },
   { id: 'assets', label: '资产复盘', icon: Wallet, detail: '只记真实成交' },
@@ -324,6 +326,7 @@ function App() {
   const settingsOpenRef = useRef(false)
   settingsOpenRef.current = settingsOpen
   const [accountEditOpen, setAccountEditOpen] = useState(false)
+  const [recordFocus, setRecordFocus] = useState(false)
   const [mobileNav, setMobileNav] = useState(false)
   const [query, setQuery] = useState('')
   const [searchResults, setSearchResults] = useState<Instrument[]>([])
@@ -549,10 +552,18 @@ function App() {
     let live = true
     const targetSpace = space
     const targetEpoch = epochRef.current
+    const targetInstrument = selected
     const isCurrent = () => live && targetEpoch === epochRef.current && spaceRef.current === targetSpace
-    request<Snapshot>(`/instruments/${encodeURIComponent(selected)}/snapshot`)
-      .then(snap => { if (isCurrent()) setData(prev => prev ? { ...prev, snapshots: { ...prev.snapshots, [selected]: snap } } : prev) })
-      .catch(e => { if (isCurrent() && !isAbortRequest(e)) setError(e instanceof Error ? e.message : '读取标的快照失败') })
+    request<Snapshot>(`/instruments/${encodeURIComponent(targetInstrument)}/snapshot`)
+      .then(snap => { if (isCurrent()) setData(prev => prev ? { ...prev, snapshots: { ...prev.snapshots, [targetInstrument]: snap } } : prev) })
+      .catch(e => {
+        if (!isCurrent() || isAbortRequest(e)) return
+        if (e instanceof InvestmentApiError && e.status === 404) {
+          setData(prev => prev ? { ...prev, snapshots: { ...prev.snapshots, [targetInstrument]: { snapshot_id: `missing-${targetInstrument}`, instrument_id: targetInstrument, status: 'missing', quote: null, history: [] } } } : prev)
+          return
+        }
+        setError(e instanceof Error ? e.message : '读取标的快照失败')
+      })
     return () => { live = false }
   }, [selected, space, owner])
   useEffect(() => {
@@ -593,6 +604,11 @@ function App() {
     }, 5 * 60 * 1000)
     return () => { live = false; window.clearInterval(timer) }
   }, [space, Boolean(data), instrumentIds.join('|'), owner])
+  useEffect(() => {
+    if (tab !== 'assets' || !recordFocus) return
+    document.getElementById('actual-record')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    setRecordFocus(false)
+  }, [tab, recordFocus])
 
   const instruments = data?.instruments || []
   const instrumentById = useMemo(() => Object.fromEntries(instruments.map(x => [x.id, x])) as Record<string, Instrument>, [instruments])
@@ -647,6 +663,18 @@ function App() {
       else setNotice(finished ? '市场数据已更新。' : '市场数据更新任务已启动，完成后页面会自动更新。')
     }
   })
+  const saveAutomaticPlan = (item: InstrumentAdvice) => act('正在保存条件预案…', async () => {
+    const saved = await request<Plan>('/advice/plans', { method: 'POST', body: JSON.stringify({ instrument_id: item.instrument_id, decision_id: item.decision_id }) })
+    await load(true)
+    setNotice(`${item.name}的条件预案已保存（${saved.date}）；没有发生交易，重复点击不会新增相同预案。`)
+  })
+  const openActualRecord = (id: string) => {
+    const recommendation = [...(data?.advice?.holdings || []), ...(data?.advice?.watchlist || [])].find(row => row.instrument_id === id)
+    setTxDraft(d => ({ ...d, instrument_id: id, kind: recommendation?.action === 'reduce' ? 'sell' : instrumentById[id]?.kind === 'fund' ? 'fund_pending' : 'buy', quantity: '', price: '', amount: '', fees: '', plan_id: '', pending_id: '' }))
+    setTab('assets')
+    setRecordFocus(true)
+    setNotice('仅在同花顺真实成交后填写实际价量和费用；打开表单不会改变持仓。')
+  }
   const addWatch = async (item: Instrument) => act('正在添加…', async () => {
     await request('/watchlist', { method: 'POST', body: JSON.stringify(item) })
     setQuery(''); setSearchResults([]); setSelected(item.id)
@@ -798,7 +826,12 @@ function App() {
         {error && <div className="alert alert-error"><ShieldAlert size={16} /><span>{error}</span><button onClick={() => setError('')}><X size={14} /></button></div>}
         {notice && <div className="alert alert-success"><Check size={15} /><span>{notice}</span><button onClick={() => setNotice('')}><X size={14} /></button></div>}
         {loading && !data ? <div className="loading-page"><LoaderCircle className="spin" size={24} /><p>正在读取投资工作台…</p><small>连接失败时不会展示模拟数据。</small></div> : !data ? <section className="connect-state"><div className="empty-icon"><Activity /></div><h1>投资服务暂不可用</h1><p>{error || '请确认个人工作台 API 服务已启动，再重新连接。'}</p><button className="button button-primary" onClick={() => void load()}><RefreshCw size={15} />重新连接</button></section> : <>
-          {tab === 'today' && <>
+          {tab === "today" && <>
+            <DecisionDashboard advice={data.advice} loading={loading} busy={!!busy || jobActive} onRefresh={() => void refresh(undefined, true)} onSettings={() => { setSettingsOpen(true); setAccountEditOpen(false) }} onInspect={id => { setSelected(id); setTab("diagnosis") }} onSavePlan={item => void saveAutomaticPlan(item)} onRecord={openActualRecord} />
+            <div className="decision-account-link"><span>证券权益 <b>{yuan(portfolio?.total_equity)}</b> · 账户现金 <b>{yuan(portfolio?.cash)}</b>{data.account_context && <> · 场外备用（未到账） <b>{yuan(data.account_context.external_cash)}</b></>}</span><button className="text-action" onClick={() => setTab("assets")}>查看资产与收益 <ArrowUpRight size={14} /></button></div>
+            <details className="research-details">
+              <summary><BarChart3 size={18} /><span>查看市场图表、自选和历史报告<small>进阶资料按需展开，日常使用不必导入报告</small></span><ChevronDown size={16} /></summary>
+              <div className="research-details-body">
             <div className="page-heading"><div><div className="eyebrow"><span className="eyebrow-dot" /> MARKET BRIEF <span>·</span> {today}</div><h1>今日盘前复盘<span className="heading-period">。</span></h1><p>先看市场环境，再检查关注标的。计划可以调整，交易由你亲自确认。</p></div><div className="heading-actions"><button className="button button-secondary" disabled={!!busy || jobActive} onClick={() => void refresh(undefined, true)}><RefreshCw size={15} className={jobActive ? 'spin' : ''} />{jobActive ? '数据更新中' : '更新市场数据'}</button><button className="button button-primary" onClick={() => setTab('plan')}><Plus size={16} />写今日预案</button></div></div>
             <section className="index-strip"><div className="section-heading"><div><h2>主要指数</h2><p>仅显示已关注且有真实行情/日线的指数。</p></div><button className="text-action" onClick={() => setTab('diagnosis')}>查看体检 <ArrowUpRight size={14} /></button></div><div className="index-grid">{majorIndexCards.map(spec => <MiniIndexCard key={`${spec.exchange}:${spec.code}`} item={spec.item} snapshot={spec.item ? data.snapshots[spec.item.id] : undefined} name={spec.name} code={spec.code} />)}</div></section>
             {data.account_context && <AccountContextCard context={data.account_context} instruments={instruments} lossLimit={data.profile.loss_limit} compact onEdit={() => { setAccountEditOpen(true); setSettingsOpen(true) }} />}
@@ -814,10 +847,13 @@ function App() {
                 <div className="report-note"><Sparkles size={13} />评分不代表收益预测；请查看原始数据和报告依据。</div></section>
             </div>
             <div className="market-visualization-grid"><MarketBars title="市场涨跌家数" labels={['上涨', '下跌', '平盘']} values={[market?.breadth?.up, market?.breadth?.down, market?.breadth?.flat]} date={market?.date} source={market?.source} complete={market?.breadth?.up != null && market?.breadth?.down != null && market?.breadth?.flat != null && market?.breadth?.total != null} /><MarketBars title="涨跌停与炸板" labels={['涨停', '跌停', '炸板']} values={[market?.sentiment?.limit_up, market?.sentiment?.limit_down, market?.sentiment?.broken]} date={market?.sentiment_date || market?.date} source={market?.sentiment_source || market?.source} independent /></div>
-            <section className="section-block"><div className="section-heading"><div><h2>我的关注</h2><p>自选数据来自本机刷新，未更新时会明确提示。</p></div><div className="section-tools"><div className="search-box"><Search size={15} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="输入名称 / 代码搜索" /><kbd>⌘ K</kbd>{query && <div className="search-popover">{searching ? <span className="search-message">正在检索公开标的信息…</span> : searchResults.length ? searchResults.map(item => <button key={item.id} onClick={() => void addWatch(item)}><span className={`kind-dot ${kindTone(item.kind)}`} /><span><b>{item.name}</b><small>{kindName[item.kind]} · {item.code} · {item.exchange}</small></span><Plus size={14} /></button>) : <span className="search-message">无匹配结果；搜索只查标的，不代表推荐。</span>}</div>}</div><button className="button button-secondary compact" disabled={!instruments.length || !!busy || jobActive} onClick={() => void refresh(instruments.map(i => i.id))}><RefreshCw size={14} />刷新自选</button></div></div>
+            <section className="section-block"><div className="section-heading"><div><h2>我的关注</h2><p>自选数据由云端采集；未更新时会明确标注缓存和数据日期。</p></div><div className="section-tools"><div className="search-box"><Search size={15} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="输入名称 / 代码搜索" /><kbd>⌘ K</kbd>{query && <div className="search-popover">{searching ? <span className="search-message">正在检索公开标的信息…</span> : searchResults.length ? searchResults.map(item => <button key={item.id} onClick={() => void addWatch(item)}><span className={`kind-dot ${kindTone(item.kind)}`} /><span><b>{item.name}</b><small>{kindName[item.kind]} · {item.code} · {item.exchange}</small></span><Plus size={14} /></button>) : <span className="search-message">无匹配结果；搜索只查标的，不代表推荐。</span>}</div>}</div><button className="button button-secondary compact" disabled={!instruments.length || !!busy || jobActive} onClick={() => void refresh(instruments.map(i => i.id))}><RefreshCw size={14} />刷新自选</button></div></div>
               {instruments.length ? <div className="watch-grid">{instruments.map(i => <InstrumentCard key={i.id} item={i} snapshot={data.snapshots[i.id]} selected={selected === i.id} onSelect={() => { setSelected(i.id); setTab(i.kind === 'fund' ? 'funds' : 'diagnosis') }} onRemove={() => void removeWatch(i.id)} />)}</div> : <EmptyState icon={Search} title="关注列表还空着" text="搜索明确品种后添加。工作台不会预置模拟持仓或虚构行情。" action={<div className="empty-search"><Search size={15} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="输入 ETF / 股票 / 基金 / 指数" /></div>} />}
             </section>
             <div className="today-bottom"><section className="card workflow-card"><div className="section-kicker">今天的三步</div><div className="workflow-steps"><button onClick={() => void refresh(undefined, true)}><span className="step-index">01</span><span><b>先确认数据日期</b><small>{market?.status === 'stale' ? '当前是缓存数据，注意过期时间。' : market?.status === 'fresh' ? '市场数据已更新，仍需核对来源。' : '市场温度尚无可信数据。'}</small></span><ArrowUpRight size={15} /></button><button onClick={() => { setTab('diagnosis'); if (!selected && instruments[0]) setSelected(instruments[0].id) }}><span className="step-index">02</span><span><b>再看持仓与标的条件</b><small>价格位置描述历史，不预测未来涨跌。</small></span><ArrowUpRight size={15} /></button><button onClick={() => setTab('plan')}><span className="step-index">03</span><span><b>最后写下计划或选择观望</b><small>预案是记录工具，不会连接券商。</small></span><ArrowUpRight size={15} /></button></div></section><section className="card mini-card"><div className="card-top"><div><div className="section-kicker">风险边界</div><div className="card-sub">按你设置的账户约束提醒</div></div><ShieldAlert size={17} className="muted-icon" /></div><div className={`risk-callout ${portfolio?.loss_triggered ? 'risk-alert' : ''}`}><b>{!data.profile.holdings_confirmed ? '初始账本待核对' : portfolio?.loss_triggered ? '已触及暂停线' : portfolio?.total_pnl != null ? '持续核对真实账本' : '尚无完整收益结论'}</b><span>{!data.profile.holdings_confirmed ? '先登记真实现金与持仓，再查看期间盈亏。' : portfolio?.loss_triggered ? '累计净亏损达到设定阈值，先暂停新增交易。' : portfolio?.valuation_complete ? `已记录盈亏 ${yuan(portfolio.total_pnl)}，按实际成交与最新行情计算。` : '确认初始持仓与行情后，账本才能计算完整收益。'}</span></div><button className="text-action" onClick={() => setTab('assets')}>查看资产复盘 <ArrowUpRight size={14} /></button></section></div>
+
+              </div>
+            </details>
           </>}
 
           {tab === 'diagnosis' && <>
@@ -848,7 +884,7 @@ function App() {
             {portfolio?.loss_triggered && <div className="loss-banner"><ShieldAlert size={18} /><div><b>累计净亏损已触及设置阈值</b><span>先暂停新增交易，复核成交记录、行情与风险承受能力。</span></div></div>}
             {historyOpen && <section className="card history-import"><div className="card-top"><div><div className="section-kicker">历史日线补充 · 最后兜底</div><div className="card-sub">优先使用自动行情；仅当自动数据确实不可用时导入CSV/JSON。</div></div><button className="icon-button" onClick={() => setHistoryOpen(false)}><X size={16} /></button></div><div className="inline-import"><InstrumentSelect items={instruments} selected={selected} onChange={setSelected} /><label className="file-picker"><FileUp size={14} />选择 CSV / JSON<input type="file" accept=".csv,.tsv,.json,text/csv,application/json" onChange={importFile('history')} /></label></div><textarea value={historyInput} onChange={e => setHistoryInput(e.target.value)} rows={5} placeholder="CSV首列日期，支持 date,open,high,low,close,volume,amount；或JSON rows 数组。" /><button className="button button-primary" onClick={() => void importHistory()} disabled={!historyInput || !selected || !!busy}>导入并注明手动来源</button></section>}
             <div className="content-grid assets-layout"><section className="card ledger-card"><div className="card-top"><div><div className="section-kicker">持仓明细</div><div className="card-sub">持仓只由真实成交和基金确认更新</div></div><span className="count-pill">{portfolio?.positions?.length || 0} 项</span></div>{portfolio?.positions?.length ? <div className="table-wrap"><table><thead><tr><th>标的</th><th>持有数量</th><th>平均成本</th><th>最新价格</th><th>市值</th><th>浮动盈亏</th><th>数据时间</th></tr></thead><tbody>{portfolio.positions.map((p,i) => { const item = instrumentById[p.instrument_id]; return <tr key={p.instrument_id || i}><td><b>{p.name || item?.name || p.instrument_id}</b><small>{p.instrument_id}</small></td><td>{quantityText(p.quantity, item)}</td><td>{priceText(p.average_cost, item)}</td><td>{priceText(p.price, item)}</td><td>{yuan(p.market_value)}</td><td className={changeTone(p.unrealized_pnl)}>{yuan(p.unrealized_pnl)}</td><td>{p.as_of || statusText(p.status)}</td></tr> })}</tbody></table></div> : <EmptyState icon={BriefcaseBusiness} title="当前没有已确认持仓" text="确认初始持仓或记录真实成交后，持仓才会显示。计划和行情不会自动加入账本。" />}{portfolio?.warnings?.length ? <div className="warning-list">{portfolio.warnings.map((w,i) => <span key={i}><CircleHelp size={13} />{w}</span>)}</div> : null}</section>
-                <section className="card transaction-card"><div className="section-kicker">记录账本</div><div className="card-sub">录入真实成交或现金流</div><form onSubmit={e => void submitTransaction(e)} className="tx-form"><div className="form-field"><label>记录类型</label><select value={txDraft.kind} onChange={e => setTxDraft(d => ({ ...d, kind: e.target.value }))}><option value="buy">买入成交</option><option value="sell">卖出成交</option><option value="deposit">入金</option><option value="withdraw">出金</option><option value="fund_pending">基金待确认</option><option value="fund_confirm">基金份额确认</option><option value="dividend">现金分红</option></select></div><div className="form-field"><label>发生日期</label><input type="date" value={txDraft.date} onChange={e => setTxDraft(d => ({ ...d, date: e.target.value }))} /></div>{['buy','sell','fund_pending','fund_confirm','dividend'].includes(txDraft.kind) && <div className="form-field"><label>标的</label><InstrumentSelect items={instruments} selected={txDraft.instrument_id} onChange={v => setTxDraft(d => ({ ...d, instrument_id: v, plan_id: '' }))} /></div>}{['buy','sell','fund_pending','fund_confirm'].includes(txDraft.kind) && <div className="form-field"><label>关联预案（可选）</label><select value={txDraft.plan_id} onChange={e => setTxDraft(d => ({ ...d, plan_id: e.target.value }))}><option value="">不关联预案</option>{data.plans.filter(p => p.instrument_id === txDraft.instrument_id).map((p,i) => <option key={p.id || i} value={p.id}>{p.date} · {p.action === 'observe' ? '观察' : p.action === 'consider' ? '有条件考虑' : '不交易'}</option>)}</select></div>}{txDraft.kind === 'fund_confirm' && <div className="form-field"><label>关联待确认记录</label><select value={txDraft.pending_id} onChange={e => setTxDraft(d => ({ ...d, pending_id: e.target.value }))}><option value="">选择待确认申购</option>{portfolio?.pending?.map((p,i) => <option key={p.pending_id || i} value={p.pending_id}>{p.name || p.instrument_id} · {p.date} · {yuan(p.amount)}</option>)}</select></div>}{['buy','sell','fund_confirm'].includes(txDraft.kind) && <div className="form-field two-fields"><div><label>份额 / 股数</label><input type="number" min="0" step="any" value={txDraft.quantity} onChange={e => setTxDraft(d => ({ ...d, quantity: e.target.value }))} placeholder="实际成交数量" /></div><div><label>成交价</label><input type="number" min="0" step="any" value={txDraft.price} onChange={e => setTxDraft(d => ({ ...d, price: e.target.value }))} placeholder="元" /></div></div>}{['deposit','withdraw','fund_pending','dividend'].includes(txDraft.kind) && <div className="form-field"><label>{txDraft.kind === 'fund_pending' ? '申购金额' : '现金金额'}</label><div className="input-with-prefix"><span>¥</span><input type="number" min="0" step="any" value={txDraft.amount} onChange={e => setTxDraft(d => ({ ...d, amount: e.target.value }))} placeholder="实际金额" /></div></div>}<div className="form-field"><label>实际费用 <span className="optional">可空，未填时保持未知</span></label><div className="input-with-prefix"><span>¥</span><input type="number" min="0" step="any" value={txDraft.fees} onChange={e => setTxDraft(d => ({ ...d, fees: e.target.value }))} placeholder="按成交单填写" /></div></div><div className="form-field"><label>备注</label><input value={txDraft.notes} onChange={e => setTxDraft(d => ({ ...d, notes: e.target.value }))} placeholder="订单号不要填写敏感账号" /></div><button className="button button-primary full" type="submit" disabled={!!busy}>{busy === '正在记录账本…' ? <LoaderCircle className="spin" size={14} /> : <Check size={14} />}保存真实记录</button><div className="side-footnote">待确认基金申购不会增加份额；确认时填写实际份额和净值。</div></form></section></div>
+                <section id="actual-record" className="card transaction-card"><div className="section-kicker">记录账本</div><div className="card-sub">录入真实成交或现金流</div><form onSubmit={e => void submitTransaction(e)} className="tx-form"><div className="form-field"><label>记录类型</label><select value={txDraft.kind} onChange={e => setTxDraft(d => ({ ...d, kind: e.target.value }))}><option value="buy">买入成交</option><option value="sell">卖出成交</option><option value="deposit">入金</option><option value="withdraw">出金</option><option value="fund_pending">基金待确认</option><option value="fund_confirm">基金份额确认</option><option value="dividend">现金分红</option></select></div><div className="form-field"><label>发生日期</label><input type="date" value={txDraft.date} onChange={e => setTxDraft(d => ({ ...d, date: e.target.value }))} /></div>{['buy','sell','fund_pending','fund_confirm','dividend'].includes(txDraft.kind) && <div className="form-field"><label>标的</label><InstrumentSelect items={instruments} selected={txDraft.instrument_id} onChange={v => setTxDraft(d => ({ ...d, instrument_id: v, plan_id: '' }))} /></div>}{['buy','sell','fund_pending','fund_confirm'].includes(txDraft.kind) && <div className="form-field"><label>关联预案（可选）</label><select value={txDraft.plan_id} onChange={e => setTxDraft(d => ({ ...d, plan_id: e.target.value }))}><option value="">不关联预案</option>{data.plans.filter(p => p.instrument_id === txDraft.instrument_id).map((p,i) => <option key={p.id || i} value={p.id}>{p.date} · {p.action === 'observe' ? '观察' : p.action === 'consider' ? '有条件考虑' : '不交易'}</option>)}</select></div>}{txDraft.kind === 'fund_confirm' && <div className="form-field"><label>关联待确认记录</label><select value={txDraft.pending_id} onChange={e => setTxDraft(d => ({ ...d, pending_id: e.target.value }))}><option value="">选择待确认申购</option>{portfolio?.pending?.map((p,i) => <option key={p.pending_id || i} value={p.pending_id}>{p.name || p.instrument_id} · {p.date} · {yuan(p.amount)}</option>)}</select></div>}{['buy','sell','fund_confirm'].includes(txDraft.kind) && <div className="form-field two-fields"><div><label>份额 / 股数</label><input type="number" min="0" step="any" value={txDraft.quantity} onChange={e => setTxDraft(d => ({ ...d, quantity: e.target.value }))} placeholder="实际成交数量" /></div><div><label>成交价</label><input type="number" min="0" step="any" value={txDraft.price} onChange={e => setTxDraft(d => ({ ...d, price: e.target.value }))} placeholder="元" /></div></div>}{['deposit','withdraw','fund_pending','dividend'].includes(txDraft.kind) && <div className="form-field"><label>{txDraft.kind === 'fund_pending' ? '申购金额' : '现金金额'}</label><div className="input-with-prefix"><span>¥</span><input type="number" min="0" step="any" value={txDraft.amount} onChange={e => setTxDraft(d => ({ ...d, amount: e.target.value }))} placeholder="实际金额" /></div></div>}<div className="form-field"><label>实际费用 <span className="optional">可空，未填时保持未知</span></label><div className="input-with-prefix"><span>¥</span><input type="number" min="0" step="any" value={txDraft.fees} onChange={e => setTxDraft(d => ({ ...d, fees: e.target.value }))} placeholder="按成交单填写" /></div></div><div className="form-field"><label>备注</label><input value={txDraft.notes} onChange={e => setTxDraft(d => ({ ...d, notes: e.target.value }))} placeholder="订单号不要填写敏感账号" /></div><button className="button button-primary full" type="submit" disabled={!!busy}>{busy === '正在记录账本…' ? <LoaderCircle className="spin" size={14} /> : <Check size={14} />}保存真实记录</button><div className="side-footnote">待确认基金申购不会增加份额；确认时填写实际份额和净值。</div></form></section></div>
             <section className="card transaction-history"><div className="card-top"><div><div className="section-kicker">交易与资金流水</div><div className="card-sub">历史记录来自云端账本</div></div><span className="count-pill">{data.transactions.length} 条</span></div>{data.transactions.length ? <div className="table-wrap"><table><thead><tr><th>日期</th><th>类型</th><th>标的</th><th>数量 / 金额</th><th>价格</th><th>费用</th><th>备注</th></tr></thead><tbody>{[...data.transactions].reverse().slice(0,20).map((t,i) => <tr key={t.id || i}><td>{t.date}</td><td><span className="pill tone-gray">{transactionLabel(t.kind)}</span></td><td>{instrumentById[t.instrument_id || '']?.name || t.instrument_id || '现金'}</td><td>{t.quantity != null ? quantityText(t.quantity, instrumentById[t.instrument_id || '']) : yuan(t.amount)}</td><td>{priceText(t.price, instrumentById[t.instrument_id || ''])}</td><td>{t.fees == null ? '待补充' : yuan(t.fees)}</td><td>{t.notes || '—'}</td></tr>)}</tbody></table></div> : <EmptyState icon={ArrowLeftRight} title="还没有账本记录" text="先核对持仓和资金，再逐笔录入实际确认的成交。" />}</section>
           </>}
 
