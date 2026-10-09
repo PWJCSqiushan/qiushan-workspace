@@ -32,3 +32,11 @@ CREATE TABLE IF NOT EXISTS investment_backups (
 );
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS investment_backups_created ON investment_backups(owner_id,space,created_at);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS investment_export_bindings (
+  owner_id text NOT NULL,
+  space text NOT NULL CHECK (space IN ('personal','demo')),
+  snapshot_id text NOT NULL,
+  binding_json text NOT NULL,
+  PRIMARY KEY(owner_id,space,snapshot_id)
+);

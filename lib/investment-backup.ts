@@ -48,9 +48,10 @@ export async function backupInvestmentAll(db: D1Database, kv: KVNamespace) {
   const rows = (
     await db
       .prepare('SELECT owner_id,space,version,state_json,updated_at FROM investment_states ORDER BY owner_id,space LIMIT ?')
-      .bind(MAX_BACKUP_ROWS)
+      .bind(MAX_BACKUP_ROWS+1)
       .all<InvestmentStateRow>()
   ).results;
+  if(rows.length>MAX_BACKUP_ROWS)throw Object.assign(new Error('Investment backup capacity exceeded; no truncated success'),{code:'INVESTMENT_BACKUP_CAPACITY_LIMIT'});
   const failures: Array<{ owner: string; space: string; code: string; error: string }> = [];
   let backedUp = 0;
   for (const row of rows) {
@@ -60,7 +61,11 @@ export async function backupInvestmentAll(db: D1Database, kv: KVNamespace) {
       continue;
     }
     try {
-      const stateHash = await sha256(row.state_json);
+      const state=JSON.parse(row.state_json) as InvestmentState;
+      const bindings=await db.prepare('SELECT snapshot_id,binding_json FROM investment_export_bindings WHERE owner_id=? AND space=?').bind(row.owner_id,row.space).all<{snapshot_id:string;binding_json:string}>();
+      state.exports ||= {};
+      for(const binding of bindings.results)state.exports[binding.snapshot_id]=JSON.parse(binding.binding_json);
+      const stateHash = await sha256(JSON.stringify(state));
       const ownerKey = await sha256(row.owner_id);
       const envelope = JSON.stringify({
         schema_version: 1,
@@ -69,7 +74,7 @@ export async function backupInvestmentAll(db: D1Database, kv: KVNamespace) {
         version: row.version,
         updated_at: row.updated_at,
         state_sha256: stateHash,
-        state: JSON.parse(row.state_json),
+        state,
       });
       await kv.put(`investment/${ownerKey}/${row.space}/latest`, envelope, { expirationTtl: 90 * 86400 });
       backedUp++;

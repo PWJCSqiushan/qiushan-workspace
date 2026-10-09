@@ -6,6 +6,28 @@ import { sha256 } from '../lib/protocol.ts';
 import { InvestmentStore } from '../lib/investment-store.ts';
 import { todayShanghai, validDate, validPlanDate, type Instrument, type Snapshot } from '../lib/investment-domain.ts';
 
+test('analysis export bindings coexist with concurrent state writes without changing CAS version',async()=>{
+ const {db}=database(),store=new InvestmentStore(db,'export-owner');
+ const binding={instrument_id:null,report_type:'market' as const,context_id:'context-synthetic',exported_at:new Date().toISOString()};
+ await Promise.all([store.registerExport('personal','snapshot-a',binding),store.registerExport('personal','snapshot-b',binding),store.mutate('personal',{base_version:0,operation_id:'parallel-profile'},state=>{state.profile.purpose='合成研究';return {};})]);
+ const state=await store.snapshot('personal');assert.equal(state.version,1);assert.deepEqual(state.exports['snapshot-a'],binding);assert.deepEqual(state.exports['snapshot-b'],binding);assert.equal(state.profile.purpose,'合成研究');
+});
+
+test('investment daily backup rejects capacity overflow rather than reporting truncated success',async()=>{
+ const {db}=database();
+ for(let i=0;i<201;i++)await new InvestmentStore(db,'capacity-'+i).ensure('demo');
+ let writes=0;
+ await assert.rejects(()=>backupInvestmentAll(db,{put:async()=>{writes++;}} as unknown as KVNamespace),/capacity exceeded/);
+ assert.equal(writes,0);
+});
+
+test('stale provider output is retained and marked degraded rather than source success',async()=>{
+ const {db}=database();const provider={fetchInvestmentSnapshot:(instrument:Instrument)=>({...snapshotFor(instrument),status:'stale' as const,error:'upstream failed'})};
+ const store=new InvestmentStore(db,'stale-owner',provider);const before=await store.snapshot('demo');
+ const refreshed=await store.refresh('demo',{base_version:before.version,operation_id:'stale-refresh'});
+ assert.equal(refreshed.job.result?.source_health[0].status,'degraded');assert.equal((await store.snapshot('demo')).snapshots[before.instruments[0].id].status,'stale');
+});
+
 function snapshotFor(instrument: Instrument): Snapshot {
   return {
     snapshot_id: `synthetic-${instrument.id}`,

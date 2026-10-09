@@ -16,6 +16,8 @@ export type TransactionKind =
 export type PlanAction = 'observe' | 'consider' | 'no_trade';
 
 export type Instrument = {
+  watched?: boolean;
+  personalized?: boolean;
   id: string;
   code: string;
   name: string;
@@ -179,6 +181,7 @@ export type AccountContext = {
 };
 
 export type Plan = {
+  decision_id?: string;
   id: string;
   instrument_id: string;
   date: string;
@@ -473,6 +476,7 @@ export function validateInstrument(input: unknown): Instrument {
   if (!input || typeof input !== 'object' || Array.isArray(input))
     throw new InvestmentValidationError('品种必须是对象');
   const raw = input as Record<string, unknown>;
+  if(raw.watched!==undefined&&typeof raw.watched!=='boolean'||raw.personalized!==undefined&&typeof raw.personalized!=='boolean')throw new InvestmentValidationError('品种关注状态无效');
   const code = raw.code;
   const name = raw.name;
   const kind = raw.kind;

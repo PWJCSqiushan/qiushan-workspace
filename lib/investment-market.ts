@@ -62,7 +62,7 @@ export interface Evidence {
   url: string;
   source: string;
   published_at: string | null;
-  kind: string;
+  kind: 'announcement' | 'financial' | 'macro' | 'news';
   summary?: string;
 }
 
@@ -1209,7 +1209,7 @@ async function makeMissingSnapshot(
 /** Fetch one instrument, retaining a stale previous snapshot when all sources fail. */
 export async function fetchInvestmentSnapshot(
   instrumentInput: Instrument,
-  previous?: Snapshot | null,
+  previous?: unknown,
 ): Promise<Snapshot> {
   const instrument = normalizeInstrument(instrumentInput);
   const parsedPrior = previousSnapshot(previous);
@@ -1602,7 +1602,7 @@ function previousMarket(input: unknown): Market | null {
 
 /** Refresh one public market breadth snapshot; incomplete breadth remains null. */
 export async function refreshInvestmentMarket(
-  previous?: Market | { market?: Market } | null,
+  previous?: unknown,
 ): Promise<Market> {
   const prior = previousMarket(previous);
   const url = queryUrl(ENDPOINTS.eastmoney_market_full, {

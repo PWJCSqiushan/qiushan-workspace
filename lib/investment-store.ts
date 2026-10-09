@@ -147,6 +147,8 @@ export class InvestmentStore {
     state.source_health ||= [];
     state.observations ||= [];
     state.exports ||= {};
+    const bindings=await this.q('SELECT snapshot_id,binding_json FROM investment_export_bindings WHERE owner_id=? AND space=?',this.owner,space).all<{snapshot_id:string;binding_json:string}>();
+    for(const binding of bindings.results)state.exports[binding.snapshot_id]=JSON.parse(binding.binding_json);
     state.snapshots = Object.fromEntries(Object.entries(state.snapshots).map(([id, snapshot]) => [id, freshness(snapshot)!]));
     state.market = freshMarket(state.market);
     validateState(state);
@@ -248,7 +250,7 @@ export class InvestmentStore {
     });
     return {
       profile: state.profile,
-      instruments: state.instruments,
+      instruments: state.instruments.filter(x=>x.watched!==false),
       snapshots,
       opening: state.opening,
       account_context: state.account_context,
@@ -336,14 +338,9 @@ export class InvestmentStore {
     const state = await this.snapshot(space);
     state.exports[snapshotId] = binding;
     validateState(state);
-    await this.q(
-      'UPDATE investment_states SET state_json=?,updated_at=? WHERE owner_id=? AND space=? AND version=?',
-      JSON.stringify(state),
-      now(),
-      this.owner,
-      space,
-      state.version,
-    ).run();
+    // Export metadata has its own row so GET requests never overwrite a
+    // concurrent ledger write or another exported snapshot's binding.
+    await this.q('INSERT INTO investment_export_bindings(owner_id,space,snapshot_id,binding_json) VALUES(?,?,?,?) ON CONFLICT(owner_id,space,snapshot_id) DO UPDATE SET binding_json=excluded.binding_json',this.owner,space,snapshotId,JSON.stringify(binding)).run();
     return binding;
   }
 
@@ -356,15 +353,16 @@ export class InvestmentStore {
       if (input.cursor !== undefined && (typeof input.cursor !== 'string' || input.cursor.length > 120)) throw new InvestmentValidationError('刷新游标无效');
       if (input.ids?.length && input.cursor) throw new InvestmentValidationError('刷新游标不能与显式品种列表同时使用');
       if (input.ids && input.ids.some((id) => !state.instruments.some((x) => x.id === id))) throw new InvestmentValidationError('刷新品种不存在');
+      const observed=state.instruments.filter(x=>x.watched!==false);
       const selected: Instrument[] = input.ids?.length
-        ? state.instruments.filter((x) => input.ids!.includes(x.id))
+        ? observed.filter((x) => input.ids!.includes(x.id))
         : (() => {
-            const start = input.cursor ? Math.max(0, state.instruments.findIndex((x) => x.id === input.cursor) + 1) : 0;
-            if (input.cursor && !state.instruments.some((x) => x.id === input.cursor)) throw new InvestmentValidationError('刷新游标不存在');
-            return state.instruments.slice(start, start + 5);
+            const start = input.cursor ? Math.max(0, observed.findIndex((x) => x.id === input.cursor) + 1) : 0;
+            if (input.cursor && !observed.some((x) => x.id === input.cursor)) throw new InvestmentValidationError('刷新游标不存在');
+            return observed.slice(start, start + 5);
           })();
       const selectedIds = new Set(selected.map((x) => x.id));
-      const remainingIds = input.ids?.length ? [] : state.instruments.filter((x) => !selectedIds.has(x.id) && state.instruments.indexOf(x) > state.instruments.indexOf(selected.at(-1) || state.instruments.at(-1)!)).map((x) => x.id);
+      const remainingIds = input.ids?.length ? [] : observed.filter((x) => !selectedIds.has(x.id) && observed.indexOf(x) > observed.indexOf(selected.at(-1) || observed.at(-1)!)).map((x) => x.id);
       const nextCursor = remainingIds.length ? selected.at(-1)?.id || input.cursor || null : null;
       const job: Job = { id: crypto.randomUUID(), status: 'running', progress: 0, message: '正在采集参考行情与历史数据', started_at: now(), finished_at: null, error: null };
       state.jobs.push(job);
@@ -380,7 +378,7 @@ export class InvestmentStore {
           const instrument = selected[i];
           try {
             const value = await withTimeout(provider.fetchInvestmentSnapshot(instrument, state.snapshots[instrument.id]), 12_000);
-            if (value) { state.snapshots[instrument.id] = value; count++; }
+            if (value) { state.snapshots[instrument.id] = value; count++; if(value.status!=='fresh'||value.error||value.history_status==='missing'||value.history_status==='stale'||value.warnings.some(w=>/获取失败|沿用.*缓存/.test(w)))failed++; }
             else throw new Error('市场 worker 未返回快照');
             job.progress = Math.min(99, Math.floor(((i + 1) / Math.max(1, selected.length)) * 100));
           } catch (error) {
@@ -395,13 +393,14 @@ export class InvestmentStore {
             const market = await withTimeout(provider.refreshInvestmentMarket(state.market), 12_000);
             if (!market) throw new Error('市场 worker 未返回市场快照');
             state.market = market;
+            if(market.status!=='fresh'||market.missing_fields.length)failed++;
           } catch (error) {
             failed++;
             if (state.market) state.market = { ...state.market, status: 'stale', warnings: [...new Set([...state.market.warnings, error instanceof Error ? error.message : '市场快照刷新失败'])] };
           }
         }
         job.status = 'completed'; job.progress = 100; job.message = '自动采集完成；缺失与缓存状态请查看来源标签'; job.finished_at = now();
-        sourceHealth.push({ source: 'investment-market', status: !selected.length || failed === 0 ? 'ok' : count === 0 ? 'failed' : 'degraded', checked_at: now() });
+        sourceHealth.push({ source: 'investment-market', status: failed === 0 ? 'ok' : count === 0 ? 'failed' : 'degraded', message:failed?'部分采集失败、缺失或使用旧缓存；请核验各快照日期':'采集结果含有效数据，请核验适用日期', checked_at: now() });
       }
       job.result = { count, source_health: sourceHealth, selected_ids: selected.map((x) => x.id), remaining: remainingIds.length, remaining_ids: remainingIds.slice(0, 100), next_cursor: nextCursor };
       state.source_health = sourceHealth;

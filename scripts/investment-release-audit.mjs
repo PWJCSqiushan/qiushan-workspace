@@ -43,7 +43,11 @@ if(process.argv.includes('--verify')){
   await writeFile(resolve(root,'after-'+name+'.json'),JSON.stringify(after));
   if(name==='finance')report.modules[name]={state_unchanged:hash(before.state)===hash(after.state),history_unchanged:hash(before.history)===hash(after.history)};
   if(name==='workflow')report.modules[name]={unchanged:hash(before)===hash(after)};
-  if(name==='time')report.modules[name]={manual_intervals_unchanged:hash(before.time.intervals.filter(x=>x.source==='manual'))===hash(after.time.intervals.filter(x=>x.source==='manual')),before_version:before.version,after_version:after.version};
+  if(name==='time')report.modules[name]={manual_intervals_unchanged:hash(before.time.intervals.filter(x=>x.manual===true))===hash(after.time.intervals.filter(x=>x.manual===true)),manual_plans_unchanged:hash(before.time.plans.filter(x=>x.manual===true))===hash(after.time.plans.filter(x=>x.manual===true)),before_version:before.version,after_version:after.version};
  }
+ const beforeGarmin=JSON.parse(await readFile(resolve(root,'before-garmin.json'),'utf8')),afterGarmin=await request('/api/time/garmin/status?space=personal');
+ const stableGarmin=value=>Object.fromEntries(['connectionId','status','scopes','helperStatus','errorCode'].map(key=>[key,value[key]]));
+ report.modules.garmin={status_unchanged:hash(stableGarmin(beforeGarmin))===hash(stableGarmin(afterGarmin))};
  await writeFile(resolve(root,'production-verification.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report));
+ for(const [name,checks] of Object.entries(report.modules))for(const [key,value] of Object.entries(checks))if(key.endsWith('unchanged')&&!value)throw new Error('Existing module changed: '+name+'.'+key);
 }

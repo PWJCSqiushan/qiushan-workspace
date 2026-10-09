@@ -1,11 +1,27 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { database } from './d1-helper.ts';
-import { handleInvestmentRequest } from '../app/api/investment/route.ts';
+import { handleInvestmentRequest } from '../lib/investment-api.ts';
 import { InvestmentStore } from '../lib/investment-store.ts';
 import { todayShanghai, type Instrument } from '../lib/investment-domain.ts';
 
 const stock: Instrument = { id: 'stock:SH:600000', code: '600000', name: '合成测试股票', kind: 'stock', exchange: 'SH' };
+
+test('opening and account context are protected; removing a sold holding preserves ledger identity',async()=>{
+ const {db}=database(),store=new InvestmentStore(db,'protected-owner');
+ let r=await call(store,'/api/investment/watchlist','POST',{base_version:0,operation_id:'protect-add',...stock});
+ r=await call(store,'/api/investment/ledger/initialize','POST',{base_version:r.value.version,operation_id:'protect-opening',date:todayShanghai(),cash:9000,positions:[{instrument_id:stock.id,quantity:100,reference_price:10,average_cost:null}],confirmed_empty:false});
+ assert.equal(r.response.status,200);assert.equal((await store.backups('personal')).length,1);
+ assert.equal((await store.snapshot('personal')).profile.initial_capital,10000);
+ assert.equal((await call(store,'/api/investment/watchlist/'+stock.id,'DELETE',{base_version:r.value.version,operation_id:'reject-held-remove'})).response.status,400);
+ r=await call(store,'/api/investment/transactions','POST',{base_version:r.value.version,operation_id:'protect-sell',kind:'sell',date:todayShanghai(),instrument_id:stock.id,quantity:100,price:10,fees:0});
+ assert.equal(r.response.status,200);
+ r=await call(store,'/api/investment/watchlist/'+stock.id,'DELETE',{base_version:r.value.version,operation_id:'remove-closed'});assert.equal(r.response.status,200);
+ const state=await store.snapshot('personal');assert.equal(state.instruments.length,1);assert.equal(state.instruments[0].watched,false);assert.equal(state.transactions.length,1);assert.equal((await call(store,'/api/investment/bootstrap')).value.instruments.length,0);
+ r=await call(store,'/api/investment/account-context','PUT',{base_version:r.value.version,operation_id:'protect-context',as_of:todayShanghai(),observed_time:null,source:'合成核验',broker_assets:10000,broker_market_value:0,broker_available_cash:10000,broker_floating_pnl:null,broker_day_pnl:null,broker_month_pnl:null,broker_month_return_pct:null,external_cash:3000,external_available_hours:null,horizon:'一年',purpose:'合成测试',cost_note:'成本未知',notes:'合成',positions:[]});
+ assert.equal(r.response.status,200);assert.equal((await store.backups('personal')).length,2);
+ assert.equal((await call(store,'/api/investment/portfolio')).value.cash,10000);
+});
 
 function req(path: string, method = 'GET', payload?: unknown) {
   return new Request(`https://private.example${path}`, {
@@ -31,12 +47,12 @@ test('investment API enforces owner+space isolation, optimistic versions and ope
   assert.equal(result.response.status, 200);
   assert.equal(result.value.version, 1);
   result = await call(a, '/api/investment/transactions?space=personal', 'POST', { space: 'personal', base_version: 1, operation_id: 'tx-1', kind: 'buy', date: '2026-10-01', instrument_id: stock.id, quantity: 100, price: 10, fees: 0 });
-  assert.equal(result.value.transaction.quantity, 100);
-  const firstId = result.value.transaction.id;
+  assert.equal(result.value.quantity, 100);
+  const firstId = result.value.id;
   const retry = await call(a, '/api/investment/transactions?space=personal', 'POST', { space: 'personal', base_version: 1, operation_id: 'tx-1', kind: 'buy', date: '2026-10-01', instrument_id: stock.id, quantity: 100, price: 10, fees: 0 });
-  assert.equal(retry.value.transaction.id, firstId);
+  assert.equal(retry.value.id, firstId);
   assert.equal((await call(a, '/api/investment/transactions?space=personal')).value.items, undefined);
-  await assert.rejects(() => call(a, '/api/investment/profile?space=personal', 'PUT', { space: 'personal', base_version: 1, operation_id: 'stale', purpose: '旧客户端' }), /投资账本已在其他设备修改/);
+  assert.equal((await call(a, '/api/investment/profile?space=personal', 'PUT', { space: 'personal', base_version: 1, operation_id: 'stale', purpose: '旧客户端' })).response.status,409);
   const other = await call(b, '/api/investment/bootstrap?space=personal');
   assert.equal(other.value.transactions.length, 0);
   const demo = await call(b, '/api/investment/bootstrap?space=demo');
@@ -71,6 +87,6 @@ test('analysis package binds context and snapshot, then reports become stale aft
   const restoreVersion = (await store.snapshot('personal')).version;
   const restored = await call(store, '/api/investment/backups/restore?space=personal', 'POST', { base_version: restoreVersion, operation_id: 'restore-1', name: backup.value.name });
   assert.equal(restored.response.status, 200);
-  assert.equal((await call(store, '/api/investment/profile?space=personal')).value.profile.purpose, '改变上下文');
+  assert.equal((await call(store, '/api/investment/profile?space=personal')).value.purpose, '改变上下文');
   assert.equal((await store.backups('personal')).length >= 2, true);
 });
