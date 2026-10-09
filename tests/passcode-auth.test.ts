@@ -10,3 +10,10 @@ test('passcode rejects missing configuration, wrong credential, cross-origin and
 test('passcode rate limit admits at most 10 requests per IP window',async()=>{const {db}=database(),hash=await sha256(randomToken());for(let i=0;i<10;i++)await assert.rejects(login(request(randomToken()),db,hash),{status:401});await assert.rejects(login(request(randomToken()),db,hash),{status:429});});
 
 test('login form retains same-origin Origin header on mobile browsers',()=>{assert.equal(loginPage().headers.get('referrer-policy'),'same-origin');});
+test('investment login returns to the protected page and rejects external redirects',async()=>{
+ const {db}=database(),secret=randomToken(),hash=await sha256(secret);
+ const make=(next:string)=>new Request(origin+'/login?next='+encodeURIComponent(next),{method:'POST',headers:{origin,'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({passcode:secret})});
+ assert.equal((await login(make('/investment'),db,hash)).headers.get('location'),'/investment');
+ for(const unsafe of ['https://attacker.test','//attacker.test','/investment?owner=other'])assert.equal((await login(make(unsafe),db,hash)).headers.get('location'),'/');
+ assert.ok((await loginPage('',200,'/investment').text()).includes('/login?next=%2Finvestment'));
+});
