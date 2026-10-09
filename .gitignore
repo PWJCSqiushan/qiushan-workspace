@@ -31,3 +31,5 @@ wrangler.local.jsonc
 /scripts/garmin/config.json
 /scripts/garmin/*.pending
 __pycache__/
+
+/output/

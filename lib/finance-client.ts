@@ -175,6 +175,32 @@ export class FinanceClient {
   private onOnline = () => {
     void this.sync();
   };
+  /** Atomically capture one ledger revision; never fetch another ledger here. */
+  async reportSnapshot(includeLocalDrafts: boolean) {
+    return this.edit(async () => {
+      if (!this.confirmed || this.blocked) throw new Error('账本尚未就绪，请先连接账本');
+      if (this.pending.length && !includeLocalDrafts)
+        throw new Error(`还有 ${this.pending.length} 笔待同步，请等待同步或选择含本地草稿的快照`);
+      let state = this.confirmed;
+      if (includeLocalDrafts) {
+        for (const p of this.pending) {
+          if (p.state !== 'queued' || p.mutation.type === 'undo' || p.mutation.type === 'redo')
+            throw new Error('存在冲突、失败或待同步撤销操作，请先在待同步列表处理后重试');
+          state = applyFinancePatches(state,
+            applyFinanceMutation(state, p.mutation, new Date(p.createdAt)).changes,
+            state.version);
+        }
+      }
+      return {
+        state: structuredClone(state),
+        metadata: {
+          generatedAt: new Date().toISOString(),
+          pendingCount: this.pending.length,
+          localDraft: includeLocalDrafts && this.pending.length > 0,
+        },
+      };
+    });
+  }
   stop() {
     this.stopped = true;
     if (this.timer) clearInterval(this.timer);

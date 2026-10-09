@@ -141,6 +141,7 @@ export function FinanceOverview({
   onDrill,
   onSetup,
   onImport,
+  onPdfExport,
   mode,
 }: {
   data: FinanceState;
@@ -149,6 +150,7 @@ export function FinanceOverview({
   onDrill: (f: FinanceFilter) => void;
   onSetup: () => void;
   onImport: () => void;
+  onPdfExport: () => void;
 }) {
   const [view, setView] = useState<FinanceView>('purpose'),
     [expanded, setExpanded] = useState<string[]>([]),
@@ -377,7 +379,10 @@ export function FinanceOverview({
           title="消费分布"
           className="f-purpose-panel"
           action={
-            <button
+            <details className="f-export-menu">
+              <summary className="f-text"><Download /> 导出 <ChevronDown /></summary>
+              <div className="f-export-options">
+              <button
               className="f-text"
               onClick={() =>
                 exportTransactions(
@@ -393,8 +398,14 @@ export function FinanceOverview({
               }
             >
               <Download />
-              导出
+              CSV明细
             </button>
+              <button className="f-text" onClick={(e) => {
+                e.currentTarget.closest('details')?.removeAttribute('open');
+                onPdfExport();
+              }}>PDF报告</button>
+              </div>
+            </details>
           }
         >
           <div className="f-table-controls">
