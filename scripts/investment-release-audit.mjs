@@ -21,6 +21,11 @@ export async function request(endpoint,payload,method=payload?'POST':'GET'){
  if(!response.ok)throw new Error('Request '+endpoint.split('?')[0]+' HTTP '+response.status);
  return response.headers.get('content-type')?.includes('application/json')?response.json():response.text();
 }
+export async function probe(endpoint){
+ const response=await fetch(base+endpoint,{redirect:'manual',signal:AbortSignal.timeout(45000),headers:{cookie,origin:base,'user-agent':'QiushanWorkspace-InvestmentAudit/1.0'}});
+ const bytes=await response.arrayBuffer();
+ return {status:response.status,bytes:bytes.byteLength};
+}
 const hash=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 if(process.argv.includes('--baseline')){
  const manifest={};
